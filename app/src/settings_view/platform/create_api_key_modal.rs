@@ -310,13 +310,21 @@ impl CreateApiKeyModal {
     }
 
     fn populate_agent_dropdown(&mut self, ctx: &mut ViewContext<Self>) {
-        if self.selected_agent_uid.is_none() {
-            self.selected_agent_uid = self
-                .agents
-                .iter()
-                .find(|agent| agent.available)
-                .map(|agent| agent.uid.clone());
-        }
+        let selected_agent_uid = self
+            .selected_agent_uid
+            .as_ref()
+            .filter(|selected_uid| {
+                self.agents
+                    .iter()
+                    .any(|agent| agent.available && agent.uid == **selected_uid)
+            })
+            .cloned()
+            .or_else(|| {
+                self.agents
+                    .iter()
+                    .find(|agent| agent.available)
+                    .map(|agent| agent.uid.clone())
+            });
         let items: Vec<DropdownItem<CreateApiKeyModalAction>> = self
             .agents
             .iter()
@@ -330,13 +338,12 @@ impl CreateApiKeyModal {
             .collect();
         self.agent_dropdown.update(ctx, |dropdown, ctx| {
             dropdown.set_items(items, ctx);
-            if let Some(selected_agent_uid) = &self.selected_agent_uid {
-                dropdown.set_selected_by_action(
-                    CreateApiKeyModalAction::SelectAgent(selected_agent_uid.clone()),
-                    ctx,
-                );
+            if let Some(uid) = &selected_agent_uid {
+                dropdown
+                    .set_selected_by_action(CreateApiKeyModalAction::SelectAgent(uid.clone()), ctx);
             }
         });
+        self.selected_agent_uid = selected_agent_uid;
     }
 
     #[cfg(test)]
