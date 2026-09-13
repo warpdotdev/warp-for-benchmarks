@@ -308,6 +308,21 @@ impl CreateApiKeyModal {
     }
 
     fn populate_agent_dropdown(&mut self, ctx: &mut ViewContext<Self>) {
+        let selected_agent_uid = self
+            .selected_agent_uid
+            .as_ref()
+            .filter(|selected_uid| {
+                self.agents
+                    .iter()
+                    .any(|agent| agent.available && agent.uid == **selected_uid)
+            })
+            .cloned()
+            .or_else(|| {
+                self.agents
+                    .iter()
+                    .find(|agent| agent.available)
+                    .map(|agent| agent.uid.clone())
+            });
         let items: Vec<DropdownItem<CreateApiKeyModalAction>> = self
             .agents
             .iter()
@@ -321,7 +336,12 @@ impl CreateApiKeyModal {
             .collect();
         self.agent_dropdown.update(ctx, |dropdown, ctx| {
             dropdown.set_items(items, ctx);
+            if let Some(uid) = &selected_agent_uid {
+                dropdown
+                    .set_selected_by_action(CreateApiKeyModalAction::SelectAgent(uid.clone()), ctx);
+            }
         });
+        self.selected_agent_uid = selected_agent_uid;
     }
 
     #[cfg(test)]
@@ -478,6 +498,12 @@ impl CreateApiKeyModal {
             }
             _ => {}
         }
+    }
+
+    fn is_create_disabled(&self, selected_key_type: ApiKeyType) -> bool {
+        self.request_state == RequestState::Pending
+            || (selected_key_type == ApiKeyType::Agent
+                && (self.selected_agent_uid.is_none() || self.is_loading_agents))
     }
 
     fn render_success_content(&self, app: &AppContext) -> Box<dyn Element> {
@@ -652,9 +678,7 @@ impl View for CreateApiKeyModal {
 
                 let is_pending = self.request_state == RequestState::Pending;
 
-                let is_create_disabled = is_pending
-                    || (selected_key_type == ApiKeyType::Agent
-                        && (self.selected_agent_uid.is_none() || self.is_loading_agents));
+                let is_create_disabled = self.is_create_disabled(selected_key_type);
 
                 let mut cancel_button_hover = appearance
                     .ui_builder()
