@@ -31,7 +31,7 @@ use warp_cli::mcp::MCPSpec;
 use warp_cli::share::ShareRequest;
 use warp_cli::skill::SkillSpec;
 use warp_core::features::FeatureFlag;
-use warp_core::{safe_debug, safe_error, safe_info};
+use warp_core::{safe_debug, safe_error, safe_info, safe_warn};
 use warp_errors::{ErrorExt, register_error, report_error, report_if_error};
 use warp_graphql::ai::{AgentTaskState, PlatformErrorCode};
 use warp_managed_secrets::ManagedSecretValue;
@@ -86,7 +86,7 @@ use crate::cloud_object::{CloudObject, CloudObjectLookup as _};
 use crate::send_telemetry_from_app_ctx;
 use crate::server::ids::{ServerId, SyncId};
 use crate::server::server_api::ServerApiProvider;
-use crate::server::server_api::ai::{AIClient, TaskStatusUpdate};
+use crate::server::server_api::ai::{AIClient, TaskGitCredentialsError, TaskStatusUpdate};
 use crate::server::server_api::harness_support::{
     HarnessSupportClient, ResolvePromptAttachedSkill, ResolvePromptRequest,
 };
@@ -98,7 +98,7 @@ use crate::terminal::cli_agent_sessions::{
 };
 use crate::terminal::model::BlockId;
 use crate::terminal::view::ConversationRestorationInNewPaneType;
-use crate::workspaces::user_workspaces::{ResolvedTeamScope, UserWorkspaces};
+use crate::workspaces::user_workspaces::{ResolvedTeamScope, TeamScopeForCli, UserWorkspaces};
 use crate::workspaces::workspace::BillingMetadata;
 
 pub(crate) mod attachments;
@@ -599,6 +599,8 @@ pub struct AgentDriverOptions {
     pub selected_harness: Harness,
     /// Model config for the selected harness. Only used for non-Oz harnesses.
     pub third_party_harness_model_config: Option<HarnessModelConfig>,
+    /// Team scope assigned to a newly created local run's headless window.
+    pub team_scope: Option<TeamScopeForCli>,
     /// Whether to skip end-of-run snapshot upload.
     pub snapshot_disabled: Option<bool>,
     /// End-of-run snapshot upload timeout override.
@@ -864,6 +866,8 @@ pub enum AgentDriverError {
     TeamMetadataRefreshTimeout,
     #[error("{0}")]
     SkillResolutionFailed(String),
+    #[error("Failed to fetch git credentials")]
+    GitCredentialsFetchFailed(#[source] TaskGitCredentialsError),
     #[error("Failed to build agent configuration")]
     ConfigBuildFailed(#[source] anyhow::Error),
     #[error("Failed to resolve server-side prompt")]
@@ -1019,6 +1023,7 @@ impl AgentDriver {
             remove_repository_origins,
             selected_harness,
             third_party_harness_model_config,
+            team_scope,
             snapshot_disabled,
             snapshot_upload_timeout,
             snapshot_script_timeout,
@@ -1079,6 +1084,12 @@ impl AgentDriver {
             selected_harness,
             third_party_harness_model_config.as_ref(),
         ));
+        if let Err(error) = git_credentials::prepend_azure_cli_wrapper_to_path(&mut env_vars) {
+            safe_warn!(
+                safe: ("Failed to add the Azure CLI authentication wrapper to PATH"),
+                full: ("Failed to add the Azure CLI authentication wrapper to PATH: {error:#}")
+            );
+        }
 
         // Signal to third-party harnesses (e.g. Claude Code) that we're in a sandbox
         // so they allow root execution with permissive flags.
@@ -1096,6 +1107,7 @@ impl AgentDriver {
                 should_share,
                 task_id,
                 conversation_restoration,
+                team_scope,
             },
             ctx,
         )?;

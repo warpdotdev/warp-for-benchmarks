@@ -219,3 +219,50 @@ fn personal_key_creation_does_not_require_an_agent() {
         });
     })
 }
+
+#[test]
+fn default_agent_selection_is_restored_after_modal_reset() {
+    App::test((), |mut app| async move {
+        let view = create_modal(&mut app);
+
+        view.update(&mut app, |modal, ctx| {
+            modal.set_agents_for_test(
+                vec![
+                    agent("1", "Default Service Account", true),
+                    agent("2", "Ben's Agent", true),
+                ],
+                ctx,
+            );
+            modal.agent_dropdown.update(ctx, |dropdown, ctx| {
+                dropdown.set_filter_query_for_test("Ben", ctx);
+            });
+        });
+
+        view.read(&app, |modal, ctx| {
+            assert_eq!(
+                modal.agent_dropdown.as_ref(ctx).selected_item_label(),
+                Some("Ben's Agent".to_string())
+            );
+        });
+
+        view.update(&mut app, |modal, ctx| {
+            modal.on_close(ctx);
+            modal.set_agents_for_test(
+                vec![
+                    agent("1", "Default Service Account", true),
+                    agent("2", "Ben's Agent", true),
+                ],
+                ctx,
+            );
+        });
+
+        view.read(&app, |modal, ctx| {
+            assert_eq!(modal.selected_agent_uid.as_deref(), Some("1"));
+            assert_eq!(
+                modal.agent_dropdown.as_ref(ctx).selected_item_label(),
+                Some("Default Service Account".to_string())
+            );
+            assert!(!modal.is_create_disabled(ApiKeyType::Agent));
+        });
+    })
+}
