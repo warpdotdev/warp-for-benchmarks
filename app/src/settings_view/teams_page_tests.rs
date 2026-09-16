@@ -119,6 +119,21 @@ fn team_with_members(members: Vec<TeamMember>, multi_admin_enabled: bool) -> Tea
     }
 }
 
+fn workspace_member(email: &str, role: MembershipRole) -> WorkspaceMember {
+    WorkspaceMember {
+        uid: UserUid::new(email),
+        email: email.to_string(),
+        role,
+        is_disabled: false,
+        usage_info: WorkspaceMemberUsageInfo {
+            is_unlimited: true,
+            request_limit: 0,
+            requests_used_since_last_refresh: 0,
+            is_request_limit_prorated: false,
+        },
+    }
+}
+
 fn workspace_with_member(
     email: &str,
     role: MembershipRole,
@@ -133,18 +148,7 @@ fn workspace_with_member(
     workspace.billing_metadata.tier.native_workspaces_policy = Some(NativeWorkspacesPolicy {
         enabled: native_workspaces_enabled,
     });
-    workspace.members.push(WorkspaceMember {
-        uid: UserUid::new(email),
-        email: email.to_string(),
-        role,
-        is_disabled: false,
-        usage_info: WorkspaceMemberUsageInfo {
-            is_unlimited: true,
-            request_limit: 0,
-            requests_used_since_last_refresh: 0,
-            is_request_limit_prorated: false,
-        },
-    });
+    workspace.members.push(workspace_member(email, role));
     workspace
 }
 
@@ -245,11 +249,19 @@ fn workspace_admin_without_team_role_can_promote_demote_and_remove() {
 
     assert_eq!(
         action_labels(&items, "regular@example.com"),
-        vec!["Promote to admin", "Remove from team"]
+        vec![
+            "Promote to admin",
+            "Remove from team",
+            "Remove from workspace"
+        ]
     );
     assert_eq!(
         action_labels(&items, ADMIN_EMAIL),
-        vec!["Demote from admin", "Remove from team"]
+        vec![
+            "Demote from admin",
+            "Remove from team",
+            "Remove from workspace"
+        ]
     );
 }
 
@@ -297,8 +309,54 @@ fn workspace_admin_cannot_transfer_ownership() {
 
     let items = TeamsPageView::team_to_item_list(&team, MEMBER_EMAIL, &workspace);
 
-    // Ownership transfer stays gated on team-owner permissions only.
-    assert!(action_labels(&items, OWNER_EMAIL).is_empty());
+    // Transfer ownership stays gated on team-owner permissions. The team owner is
+    // not the workspace owner here, so the workspace action is still offered.
+    assert_eq!(
+        action_labels(&items, OWNER_EMAIL),
+        vec!["Remove from workspace"]
+    );
+}
+
+#[test]
+fn workspace_admin_cannot_remove_the_workspace_owner() {
+    let team = team_with_members(
+        vec![
+            member(MEMBER_EMAIL, MembershipRole::User),
+            member(OWNER_EMAIL, MembershipRole::User),
+        ],
+        true,
+    );
+    let mut workspace = admin_workspace(MEMBER_EMAIL);
+    workspace
+        .members
+        .push(workspace_member(OWNER_EMAIL, MembershipRole::Owner));
+
+    let items = TeamsPageView::team_to_item_list(&team, MEMBER_EMAIL, &workspace);
+
+    // The workspace owner keeps every other action they would otherwise get.
+    assert!(
+        !action_labels(&items, OWNER_EMAIL).contains(&"Remove from workspace".to_string()),
+        "the workspace owner's row must not offer Remove from workspace"
+    );
+}
+
+#[test]
+fn team_only_admin_does_not_get_the_workspace_removal_action() {
+    let team = team_with_members(
+        vec![
+            member(ADMIN_EMAIL, MembershipRole::Admin),
+            member(MEMBER_EMAIL, MembershipRole::User),
+        ],
+        true,
+    );
+    let workspace = workspace_with_member(ADMIN_EMAIL, MembershipRole::User, true);
+
+    let items = TeamsPageView::team_to_item_list(&team, ADMIN_EMAIL, &workspace);
+
+    assert!(
+        !action_labels(&items, MEMBER_EMAIL).contains(&"Remove from workspace".to_string()),
+        "a team admin without a workspace admin role must only get Remove from team"
+    );
 }
 
 #[test]
@@ -318,7 +376,7 @@ fn workspace_admin_without_multi_admin_plan_can_remove_but_not_promote() {
     // workspace-admin override.
     assert_eq!(
         action_labels(&items, "regular@example.com"),
-        vec!["Remove from team"]
+        vec!["Remove from team", "Remove from workspace"]
     );
 }
 

@@ -19,6 +19,8 @@ const CANCEL_TEXT: &str = "Cancel";
 
 const DELETE_TEAM_TITLE_TEXT: &str = "Are you sure you want to delete this team?";
 const LEAVE_TEAM_TITLE_TEXT: &str = "Are you sure you want to leave this team?";
+const REMOVE_FROM_TEAM_TITLE_TEXT: &str = "Remove from team?";
+const REMOVE_FROM_WORKSPACE_TITLE_TEXT: &str = "Remove from workspace?";
 const REMOVE_TEAM_MEMBER_TITLE_TEXT: &str = "Are you sure you want to remove this member?";
 
 const DELETE_TEAM_BODY_TEXT: &str = "Deleting this team will permanently delete it and all of its related content, including billing information or credits. You will not be able to restore them.";
@@ -31,6 +33,8 @@ const REMOVE_TEAM_MEMBER_RELOAD_CREDITS_BODY_TEXT: &str = "This member will lose
 const DELETE_TEAM_CONFIRM_TEXT: &str = "Yes, delete";
 const LEAVE_TEAM_CONFIRM_TEXT: &str = "Yes, leave";
 const LEAVE_TEAM_RELOAD_CREDITS_CONFIRM_TEXT: &str = "Leave Team";
+const REMOVE_FROM_TEAM_CONFIRM_TEXT: &str = "Remove from team";
+const REMOVE_FROM_WORKSPACE_CONFIRM_TEXT: &str = "Remove from workspace";
 const REMOVE_TEAM_MEMBER_RELOAD_CREDITS_CONFIRM_TEXT: &str = "Remove Member";
 
 pub enum CloudActionConfirmationDialogEvent {
@@ -53,6 +57,14 @@ pub enum CloudActionConfirmationDialogVariant {
     DeleteTeam,
     LeaveTeamReloadCredits,
     RemoveTeamMemberReloadCredits,
+    RemoveUserFromNativeWorkspaceTeam {
+        email: String,
+        workspace_name: String,
+    },
+    RemoveUserFromWorkspace {
+        email: String,
+        workspace_name: String,
+    },
     #[default]
     None,
 }
@@ -97,6 +109,12 @@ impl CloudActionConfirmationDialog {
             CloudActionConfirmationDialogVariant::RemoveTeamMemberReloadCredits => {
                 REMOVE_TEAM_MEMBER_TITLE_TEXT.to_string()
             }
+            CloudActionConfirmationDialogVariant::RemoveUserFromNativeWorkspaceTeam { .. } => {
+                REMOVE_FROM_TEAM_TITLE_TEXT.to_string()
+            }
+            CloudActionConfirmationDialogVariant::RemoveUserFromWorkspace { .. } => {
+                REMOVE_FROM_WORKSPACE_TITLE_TEXT.to_string()
+            }
             CloudActionConfirmationDialogVariant::None => String::new(),
         }
     }
@@ -114,6 +132,20 @@ impl CloudActionConfirmationDialog {
             CloudActionConfirmationDialogVariant::RemoveTeamMemberReloadCredits => {
                 REMOVE_TEAM_MEMBER_RELOAD_CREDITS_BODY_TEXT.to_string()
             }
+            CloudActionConfirmationDialogVariant::RemoveUserFromNativeWorkspaceTeam {
+                email,
+                workspace_name,
+            } => format!(
+                "Are you sure you want to remove {email} from this team? {email} will still keep \
+                 their {workspace_name} workspace membership and their other team memberships."
+            ),
+            CloudActionConfirmationDialogVariant::RemoveUserFromWorkspace {
+                email,
+                workspace_name,
+            } => format!(
+                "Are you sure you want to remove {email} from the workspace? This will remove \
+                 {email} from all teams in {workspace_name} and from the workspace itself."
+            ),
             CloudActionConfirmationDialogVariant::None => String::new(),
         }
     }
@@ -132,6 +164,12 @@ impl CloudActionConfirmationDialog {
             }
             CloudActionConfirmationDialogVariant::RemoveTeamMemberReloadCredits => {
                 REMOVE_TEAM_MEMBER_RELOAD_CREDITS_CONFIRM_TEXT.to_string()
+            }
+            CloudActionConfirmationDialogVariant::RemoveUserFromNativeWorkspaceTeam { .. } => {
+                REMOVE_FROM_TEAM_CONFIRM_TEXT.to_string()
+            }
+            CloudActionConfirmationDialogVariant::RemoveUserFromWorkspace { .. } => {
+                REMOVE_FROM_WORKSPACE_CONFIRM_TEXT.to_string()
             }
             CloudActionConfirmationDialogVariant::None => String::new(),
         }

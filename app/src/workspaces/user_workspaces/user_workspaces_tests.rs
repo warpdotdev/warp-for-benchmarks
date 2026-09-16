@@ -3995,6 +3995,75 @@ fn test_remove_user_from_team_success_emits_success_event_and_refreshes_members(
     })
 }
 
+#[test]
+fn test_remove_user_from_workspace_forwards_uids_and_team_settings_entrypoint() {
+    let workspace = workspace_for_test(&team_for_test());
+    let workspace_uid = workspace.uid;
+
+    App::test((), |mut app| async move {
+        let mut workspace_client = MockWorkspaceClient::new();
+        workspace_client
+            .expect_remove_user_from_workspace()
+            .withf(move |user_uid, expected_workspace_uid, entrypoint| {
+                *user_uid == UserUid::new("member-uid")
+                    && *expected_workspace_uid == workspace_uid
+                    && *entrypoint == CloudObjectEventEntrypoint::TeamSettings
+            })
+            .times(1)
+            .returning(|_, _, _| {
+                Ok(WorkspacesMetadataWithPricing {
+                    metadata: WorkspacesMetadataResponse {
+                        workspaces: vec![],
+                        joinable_teams: vec![],
+                        experiments: None,
+                        ai_credit_availability: None,
+                        user_purchase_policy: None,
+                    },
+                    pricing_info: None,
+                })
+            });
+
+        app.add_singleton_model(PrivacySettings::mock);
+        app.add_singleton_model(|ctx| {
+            UserWorkspaces::mock(
+                Arc::new(MockTeamClient::new()),
+                Arc::new(workspace_client),
+                vec![],
+                ctx,
+            )
+        });
+
+        let user_workspaces_handle = UserWorkspaces::handle(&app);
+        let (sender, receiver) = async_channel::unbounded();
+        app.update(|ctx| {
+            let sender = sender.clone();
+            ctx.subscribe_to_model(
+                &user_workspaces_handle,
+                move |_, event: &UserWorkspacesEvent, _| {
+                    if matches!(event, UserWorkspacesEvent::RemoveUserFromWorkspaceSuccess) {
+                        let _ = sender.try_send(());
+                    }
+                },
+            );
+        });
+
+        UserWorkspaces::handle(&app).update(&mut app, |user_workspaces, ctx| {
+            user_workspaces.remove_user_from_workspace(
+                UserUid::new("member-uid"),
+                workspace_uid,
+                CloudObjectEventEntrypoint::TeamSettings,
+                ctx,
+            );
+        });
+
+        warpui::r#async::Timer::after(Duration::from_millis(100)).await;
+
+        receiver
+            .try_recv()
+            .expect("expected RemoveUserFromWorkspaceSuccess to be emitted");
+    })
+}
+
 fn gql_tier(purchase_policy: Option<GqlPurchaseAddOnCreditsPolicy>) -> GqlTier {
     GqlTier {
         name: "Free".to_string(),
