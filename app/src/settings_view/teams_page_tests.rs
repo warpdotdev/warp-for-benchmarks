@@ -194,6 +194,125 @@ fn owner_can_transfer_promote_and_remove_without_workspace_admin_role() {
 }
 
 #[test]
+fn team_only_admin_cannot_remove_member_from_native_workspace() {
+    let team = team_with_members(
+        vec![
+            member(ADMIN_EMAIL, MembershipRole::Admin),
+            member(MEMBER_EMAIL, MembershipRole::User),
+        ],
+        true,
+    );
+    let workspace = workspace_with_member(ADMIN_EMAIL, MembershipRole::User, true);
+
+    let items = TeamsPageView::team_to_item_list(&team, ADMIN_EMAIL, &workspace);
+
+    assert_eq!(
+        action_labels(&items, MEMBER_EMAIL),
+        vec!["Promote to admin", "Remove from team"]
+    );
+}
+
+#[test]
+fn workspace_removal_targets_every_team_membership() {
+    let team = team_with_members(
+        vec![
+            member(ADMIN_EMAIL, MembershipRole::User),
+            member(MEMBER_EMAIL, MembershipRole::User),
+        ],
+        true,
+    );
+    let mut second_team = team.clone();
+    second_team.uid = 2.into();
+    let mut workspace = admin_workspace(ADMIN_EMAIL);
+    workspace.teams = vec![team.clone(), second_team];
+
+    let items = TeamsPageView::team_to_item_list(&team, ADMIN_EMAIL, &workspace);
+
+    let removal_action = items
+        .iter()
+        .find(|item| item.text == MEMBER_EMAIL)
+        .and_then(|item| {
+            item.actions
+                .iter()
+                .find(|action| action.label == "Remove from workspace")
+        })
+        .expect("workspace removal action should be available");
+    let TeamsPageAction::RemoveUserFromWorkspace { team_uids, .. } = &removal_action.action else {
+        panic!("workspace removal should use the workspace-scoped action");
+    };
+    assert_eq!(
+        team_uids.as_slice(),
+        &[ServerId::from(1), ServerId::from(2)]
+    );
+}
+
+#[test]
+fn workspace_owner_target_cannot_be_removed_from_workspace() {
+    let team = team_with_members(
+        vec![
+            member(ADMIN_EMAIL, MembershipRole::User),
+            member(MEMBER_EMAIL, MembershipRole::User),
+        ],
+        true,
+    );
+    let mut workspace = admin_workspace(ADMIN_EMAIL);
+    workspace.members.push(WorkspaceMember {
+        uid: UserUid::new(MEMBER_EMAIL),
+        email: MEMBER_EMAIL.to_string(),
+        role: MembershipRole::Owner,
+        is_disabled: false,
+        usage_info: WorkspaceMemberUsageInfo {
+            is_unlimited: true,
+            request_limit: 0,
+            requests_used_since_last_refresh: 0,
+            is_request_limit_prorated: false,
+        },
+    });
+
+    let items = TeamsPageView::team_to_item_list(&team, ADMIN_EMAIL, &workspace);
+
+    assert_eq!(
+        action_labels(&items, MEMBER_EMAIL),
+        vec!["Promote to admin", "Remove from team"]
+    );
+}
+
+#[test]
+fn team_owner_target_keeps_all_removal_protections() {
+    let team = team_with_members(
+        vec![
+            member(ADMIN_EMAIL, MembershipRole::User),
+            member(OWNER_EMAIL, MembershipRole::Owner),
+        ],
+        true,
+    );
+    let workspace = admin_workspace(ADMIN_EMAIL);
+
+    let items = TeamsPageView::team_to_item_list(&team, ADMIN_EMAIL, &workspace);
+
+    assert!(action_labels(&items, OWNER_EMAIL).is_empty());
+}
+
+#[test]
+fn non_native_workspace_has_only_team_removal_action() {
+    let team = team_with_members(
+        vec![
+            member(ADMIN_EMAIL, MembershipRole::User),
+            member(MEMBER_EMAIL, MembershipRole::User),
+        ],
+        true,
+    );
+    let workspace = workspace_with_member(ADMIN_EMAIL, MembershipRole::Admin, false);
+
+    let items = TeamsPageView::team_to_item_list(&team, ADMIN_EMAIL, &workspace);
+
+    assert_eq!(
+        action_labels(&items, MEMBER_EMAIL),
+        vec!["Promote to admin", "Remove from team"]
+    );
+}
+
+#[test]
 fn team_admin_can_promote_and_remove_without_workspace_admin_role() {
     let team = team_with_members(
         vec![
@@ -245,11 +364,19 @@ fn workspace_admin_without_team_role_can_promote_demote_and_remove() {
 
     assert_eq!(
         action_labels(&items, "regular@example.com"),
-        vec!["Promote to admin", "Remove from team"]
+        vec![
+            "Promote to admin",
+            "Remove from team",
+            "Remove from workspace"
+        ]
     );
     assert_eq!(
         action_labels(&items, ADMIN_EMAIL),
-        vec!["Demote from admin", "Remove from team"]
+        vec![
+            "Demote from admin",
+            "Remove from team",
+            "Remove from workspace"
+        ]
     );
 }
 
@@ -318,7 +445,7 @@ fn workspace_admin_without_multi_admin_plan_can_remove_but_not_promote() {
     // workspace-admin override.
     assert_eq!(
         action_labels(&items, "regular@example.com"),
-        vec!["Remove from team"]
+        vec!["Remove from team", "Remove from workspace"]
     );
 }
 
