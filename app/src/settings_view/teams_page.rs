@@ -79,7 +79,7 @@ use crate::workspaces::team::{DiscoverableTeam, MembershipRole, Team, TeamDelete
 use crate::workspaces::update_manager::{TeamUpdateManager, TeamUpdateManagerEvent};
 use crate::workspaces::user_workspaces::{UserWorkspaces, UserWorkspacesEvent};
 use crate::workspaces::workspace::{
-    BillingMetadata, CustomerType, DelinquencyStatus, Workspace, WorkspaceSizePolicy,
+    BillingMetadata, CustomerType, DelinquencyStatus, Workspace, WorkspaceSizePolicy, WorkspaceUid,
 };
 
 const TEAM_MEMBERS_HEADER_POSITION_ID: &str = "team_settings:team_members_header";
@@ -183,6 +183,13 @@ pub enum TeamsPageAction {
     RemoveUserFromTeam {
         user_uid: UserUid,
         team_uid: ServerId,
+        member_email: String,
+    },
+    RemoveUserFromWorkspace {
+        user_uid: UserUid,
+        workspace_uid: WorkspaceUid,
+        member_email: String,
+        workspace_name: String,
     },
     ToggleIsInviteLinkEnabled {
         team_uid: ServerId,
@@ -251,6 +258,7 @@ impl TeamsPageAction {
                 | CreateTeam
                 | DeletePendingEmailInvitation { .. }
                 | RemoveUserFromTeam { .. }
+                | RemoveUserFromWorkspace { .. }
                 | AddDomainRestrictions { .. }
                 | DeleteDomainRestriction { .. }
                 | SendEmailInvites { .. }
@@ -276,6 +284,7 @@ impl From<&TeamsPageAction> for LoginGatedFeature {
             CreateTeam => "Create Team",
             DeletePendingEmailInvitation { .. } => "Delete Pending Email Invitation",
             RemoveUserFromTeam { .. } => "Remove User From Team",
+            RemoveUserFromWorkspace { .. } => "Remove User From Workspace",
             AddDomainRestrictions { .. } => "Add Domain Restrictions",
             DeleteDomainRestriction { .. } => "Delete Domain Restriction",
             SendEmailInvites { .. } => "Send Email Invites",
@@ -507,6 +516,10 @@ enum TeamActionConfirmationTarget {
         user_uid: UserUid,
         team_uid: ServerId,
     },
+    RemoveUserFromWorkspace {
+        user_uid: UserUid,
+        workspace_uid: WorkspaceUid,
+    },
 }
 
 pub struct TeamsPageView {
@@ -567,10 +580,16 @@ impl TypedActionView for TeamsPageView {
             TeamsPageAction::CopyLink(link) => self.copy_invite_link(link, ctx),
             TeamsPageAction::LeaveTeam => self.leave_team(ctx),
             TeamsPageAction::CreateTeam => self.create_team(ctx),
-            TeamsPageAction::RemoveUserFromTeam { user_uid, team_uid } => {
-                if FeatureFlag::BillingAndUsagePageV2.is_enabled() {
+            TeamsPageAction::RemoveUserFromTeam {
+                user_uid,
+                team_uid,
+                member_email,
+            } => {
+                if let Some(variant) =
+                    self.remove_team_member_confirmation_variant(member_email, ctx)
+                {
                     self.show_team_action_confirmation(
-                        CloudActionConfirmationDialogVariant::RemoveTeamMemberReloadCredits,
+                        variant,
                         TeamActionConfirmationTarget::RemoveUser {
                             user_uid: *user_uid,
                             team_uid: *team_uid,
@@ -580,6 +599,24 @@ impl TypedActionView for TeamsPageView {
                 } else {
                     self.remove_user_from_team(*user_uid, *team_uid, ctx);
                 }
+            }
+            TeamsPageAction::RemoveUserFromWorkspace {
+                user_uid,
+                workspace_uid,
+                member_email,
+                workspace_name,
+            } => {
+                self.show_team_action_confirmation(
+                    CloudActionConfirmationDialogVariant::RemoveWorkspaceMember {
+                        member_email: member_email.clone(),
+                        workspace_name: workspace_name.clone(),
+                    },
+                    TeamActionConfirmationTarget::RemoveUserFromWorkspace {
+                        user_uid: *user_uid,
+                        workspace_uid: *workspace_uid,
+                    },
+                    ctx,
+                );
             }
             TeamsPageAction::ChangeInviteViewOption(view_option) => {
                 self.change_invite_view_option(view_option, ctx);
@@ -1119,6 +1156,17 @@ impl TeamsPageView {
                     ctx,
                 );
             }
+            UserWorkspacesEvent::RemoveUserFromWorkspaceSuccess => {
+                self.update_team_members_state(ctx);
+                self.show_success("Removed workspace member", ctx);
+            }
+            UserWorkspacesEvent::RemoveUserFromWorkspaceRejected(err) => {
+                self.show_error(
+                    format!("Failed to remove workspace member: {err}"),
+                    Some(err),
+                    ctx,
+                );
+            }
             UserWorkspacesEvent::UpdateWorkspaceSettingsSuccess => {
                 // as of right now, this is only emitted on the billing & usage page
             }
@@ -1151,6 +1199,26 @@ impl TeamsPageView {
                 .as_ref(ctx)
                 .total_user_interactive_bonus_credits_remaining()
                 > 0
+    }
+
+    fn remove_team_member_confirmation_variant(
+        &self,
+        member_email: &str,
+        ctx: &AppContext,
+    ) -> Option<CloudActionConfirmationDialogVariant> {
+        let workspace = self.user_workspaces.as_ref(ctx).current_workspace()?;
+        if workspace.is_native_workspaces_enabled() {
+            Some(
+                CloudActionConfirmationDialogVariant::RemoveNativeWorkspaceTeamMember {
+                    member_email: member_email.to_string(),
+                    workspace_name: workspace.name.clone(),
+                },
+            )
+        } else if FeatureFlag::BillingAndUsagePageV2.is_enabled() {
+            Some(CloudActionConfirmationDialogVariant::RemoveTeamMemberReloadCredits)
+        } else {
+            None
+        }
     }
 
     fn show_team_action_confirmation(
@@ -1201,6 +1269,12 @@ impl TeamsPageView {
             }
             TeamActionConfirmationTarget::RemoveUser { user_uid, team_uid } => {
                 self.remove_user_from_team(user_uid, team_uid, ctx);
+            }
+            TeamActionConfirmationTarget::RemoveUserFromWorkspace {
+                user_uid,
+                workspace_uid,
+            } => {
+                self.remove_user_from_workspace(user_uid, workspace_uid, ctx);
             }
         }
         ctx.notify();
@@ -1576,6 +1650,23 @@ impl TeamsPageView {
             });
     }
 
+    fn remove_user_from_workspace(
+        &mut self,
+        user_uid: UserUid,
+        workspace_uid: WorkspaceUid,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        self.user_workspaces
+            .update(ctx, move |user_workspaces, ctx| {
+                user_workspaces.remove_user_from_workspace(
+                    user_uid,
+                    workspace_uid,
+                    CloudObjectEventEntrypoint::TeamSettings,
+                    ctx,
+                );
+            });
+    }
+
     fn leave_team(&mut self, ctx: &mut ViewContext<Self>) {
         let team_uid = self
             .user_workspaces
@@ -1843,6 +1934,7 @@ impl TeamsPageView {
         let current_user_has_admin_permissions = team.has_admin_permissions(current_user_email)
             || workspace.is_workspace_admin(current_user_email);
         let current_user_has_owner_permissions = team.has_owner_permissions(current_user_email);
+        let current_user_is_workspace_admin = workspace.is_workspace_admin(current_user_email);
 
         // pending email invites
         team.pending_email_invites.iter().for_each(|email_invite| {
@@ -1947,6 +2039,23 @@ impl TeamsPageView {
                         action: TeamsPageAction::RemoveUserFromTeam {
                             user_uid: member.uid,
                             team_uid: team.uid,
+                            member_email: member.email.clone(),
+                        },
+                    });
+                }
+
+                if workspace.is_native_workspaces_enabled()
+                    && current_user_is_workspace_admin
+                    && member_workspace_role != Some(MembershipRole::Owner)
+                {
+                    actions.push(ItemAction {
+                        icon: Icon::X,
+                        label: "Remove from workspace".to_string(),
+                        action: TeamsPageAction::RemoveUserFromWorkspace {
+                            user_uid: member.uid,
+                            workspace_uid: workspace.uid,
+                            member_email: member.email.clone(),
+                            workspace_name: workspace.name.clone(),
                         },
                     });
                 }

@@ -157,20 +157,45 @@ fn workspace_admin_without_team_role_can_promote_demote_and_remove() {
             member(MEMBER_EMAIL, MembershipRole::User),
             member("regular@example.com", MembershipRole::User),
             member(ADMIN_EMAIL, MembershipRole::Admin),
+            member(OWNER_EMAIL, MembershipRole::User),
         ],
         true,
     );
-    let workspace = admin_workspace(MEMBER_EMAIL);
+    let mut workspace = admin_workspace(MEMBER_EMAIL);
+    workspace.members.push(WorkspaceMember {
+        uid: UserUid::new(OWNER_EMAIL),
+        email: OWNER_EMAIL.to_string(),
+        role: MembershipRole::Owner,
+        is_disabled: false,
+        usage_info: WorkspaceMemberUsageInfo {
+            is_unlimited: true,
+            request_limit: 0,
+            requests_used_since_last_refresh: 0,
+            is_request_limit_prorated: false,
+        },
+    });
 
     let items = TeamsPageView::team_to_item_list(&team, MEMBER_EMAIL, &workspace);
 
     assert_eq!(
         action_labels(&items, "regular@example.com"),
-        vec!["Promote to admin", "Remove from team"]
+        vec![
+            "Promote to admin",
+            "Remove from team",
+            "Remove from workspace"
+        ]
     );
     assert_eq!(
         action_labels(&items, ADMIN_EMAIL),
-        vec!["Demote from admin", "Remove from team"]
+        vec![
+            "Demote from admin",
+            "Remove from team",
+            "Remove from workspace"
+        ]
+    );
+    assert_eq!(
+        action_labels(&items, OWNER_EMAIL),
+        vec!["Promote to admin", "Remove from team"]
     );
 }
 
@@ -206,8 +231,10 @@ fn workspace_admin_cannot_transfer_ownership() {
 
     let items = TeamsPageView::team_to_item_list(&team, MEMBER_EMAIL, &workspace);
 
-    // Ownership transfer stays gated on team-owner permissions only.
-    assert!(action_labels(&items, OWNER_EMAIL).is_empty());
+    assert_eq!(
+        action_labels(&items, OWNER_EMAIL),
+        vec!["Remove from workspace"]
+    );
 }
 
 #[test]
@@ -227,7 +254,7 @@ fn workspace_admin_without_multi_admin_plan_can_remove_but_not_promote() {
     // workspace-admin override.
     assert_eq!(
         action_labels(&items, "regular@example.com"),
-        vec!["Remove from team"]
+        vec!["Remove from team", "Remove from workspace"]
     );
 }
 
