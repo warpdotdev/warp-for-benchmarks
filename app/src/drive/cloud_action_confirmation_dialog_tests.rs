@@ -56,14 +56,10 @@ fn native_workspace_removal_describes_full_scope() {
 #[test]
 fn legacy_team_removal_keeps_reload_credit_warning() {
     let mut dialog = CloudActionConfirmationDialog::new();
-    dialog.set_variant(
-        CloudActionConfirmationDialogVariant::RemoveTeamMemberReloadCredits {
-            member_email: "member@example.com".to_string(),
-        },
-    );
+    dialog.set_variant(CloudActionConfirmationDialogVariant::RemoveTeamMemberReloadCredits);
 
     assert_eq!(
         dialog.body_text(),
-        "member@example.com will lose access to any remaining reload credits tied to this team. If they rejoin later, they’ll regain access to any unused, non-expired credits."
+        "This member will lose access to any remaining reload credits tied to this team. If they rejoin later, they’ll regain access to any unused, non-expired credits."
     );
 }

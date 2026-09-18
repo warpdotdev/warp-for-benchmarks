@@ -28,6 +28,7 @@ const LEAVE_TEAM_BODY_TEXT: &str = "You will need to be reinvited in order to re
 const LEAVE_NATIVE_WORKSPACE_TEAM_BODY_TEXT: &str =
     "Your workspace access and other team memberships won’t change.";
 const LEAVE_TEAM_RELOAD_CREDITS_BODY_TEXT: &str = "If you leave this team, you’ll lose access to any remaining reload credits tied to it. You’ll regain access to any unused, non-expired credits if you rejoin the same team later.";
+const REMOVE_TEAM_MEMBER_RELOAD_CREDITS_BODY_TEXT: &str = "This member will lose access to any remaining reload credits tied to this team. If they rejoin later, they’ll regain access to any unused, non-expired credits.";
 
 const DELETE_TEAM_CONFIRM_TEXT: &str = "Yes, delete";
 const LEAVE_TEAM_CONFIRM_TEXT: &str = "Yes, leave";
@@ -55,9 +56,7 @@ pub enum CloudActionConfirmationDialogVariant {
     },
     DeleteTeam,
     LeaveTeamReloadCredits,
-    RemoveTeamMemberReloadCredits {
-        member_email: String,
-    },
+    RemoveTeamMemberReloadCredits,
     RemoveNativeWorkspaceTeamMember {
         member_email: String,
         workspace_name: String,
@@ -107,7 +106,7 @@ impl CloudActionConfirmationDialog {
                 format!("Leave {team_name}?")
             }
             CloudActionConfirmationDialogVariant::DeleteTeam => DELETE_TEAM_TITLE_TEXT.to_string(),
-            CloudActionConfirmationDialogVariant::RemoveTeamMemberReloadCredits { .. } => {
+            CloudActionConfirmationDialogVariant::RemoveTeamMemberReloadCredits => {
                 REMOVE_TEAM_MEMBER_TITLE_TEXT.to_string()
             }
             CloudActionConfirmationDialogVariant::RemoveNativeWorkspaceTeamMember { .. } => {
@@ -130,12 +129,8 @@ impl CloudActionConfirmationDialog {
             CloudActionConfirmationDialogVariant::LeaveTeamReloadCredits => {
                 LEAVE_TEAM_RELOAD_CREDITS_BODY_TEXT.to_string()
             }
-            CloudActionConfirmationDialogVariant::RemoveTeamMemberReloadCredits {
-                member_email,
-            } => {
-                format!(
-                    "{member_email} will lose access to any remaining reload credits tied to this team. If they rejoin later, they’ll regain access to any unused, non-expired credits."
-                )
+            CloudActionConfirmationDialogVariant::RemoveTeamMemberReloadCredits => {
+                REMOVE_TEAM_MEMBER_RELOAD_CREDITS_BODY_TEXT.to_string()
             }
             CloudActionConfirmationDialogVariant::RemoveNativeWorkspaceTeamMember {
                 member_email,
@@ -169,7 +164,7 @@ impl CloudActionConfirmationDialog {
             CloudActionConfirmationDialogVariant::LeaveTeamReloadCredits => {
                 LEAVE_TEAM_RELOAD_CREDITS_CONFIRM_TEXT.to_string()
             }
-            CloudActionConfirmationDialogVariant::RemoveTeamMemberReloadCredits { .. } => {
+            CloudActionConfirmationDialogVariant::RemoveTeamMemberReloadCredits => {
                 REMOVE_TEAM_MEMBER_RELOAD_CREDITS_CONFIRM_TEXT.to_string()
             }
             CloudActionConfirmationDialogVariant::RemoveNativeWorkspaceTeamMember { .. } => {
