@@ -2208,7 +2208,6 @@ impl TeamsPageView {
                     }
                 }
 
-                let current_user_is_team_admin = team.has_admin_permissions(current_user_email);
                 let current_user_is_workspace_admin =
                     workspace.is_workspace_admin(current_user_email);
                 let native_workspaces = workspace.is_native_workspaces_enabled();
@@ -2230,10 +2229,7 @@ impl TeamsPageView {
                     });
                 }
 
-                let show_remove_from_team = !team_member_has_owner_permissions
-                    && (current_user_is_team_admin
-                        || (current_user_is_workspace_admin && !native_workspaces));
-                if show_remove_from_team {
+                if current_user_has_admin_permissions && !team_member_has_owner_permissions {
                     actions.push(ItemAction {
                         icon: Icon::X,
                         label: "Remove from team".to_string(),
