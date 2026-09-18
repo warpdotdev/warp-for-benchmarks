@@ -91,6 +91,13 @@ use crate::{
     AgentNotificationsModel, GlobalResourceHandlesProvider, ObjectActions, experiments, workspace,
 };
 pub(crate) fn initialize_app(app: &mut App) {
+    initialize_app_with_user_workspaces(app, UserWorkspaces::default_mock);
+}
+
+pub(crate) fn initialize_app_with_user_workspaces<F>(app: &mut App, create_user_workspaces: F)
+where
+    F: FnOnce(&mut warpui::ModelContext<UserWorkspaces>) -> UserWorkspaces,
+{
     initialize_settings_for_tests(app);
 
     // Add the necessary singleton models to the App
@@ -107,7 +114,7 @@ pub(crate) fn initialize_app(app: &mut App) {
     app.add_singleton_model(SyncQueue::mock);
     app.add_singleton_model(CloudModel::mock);
     app.add_singleton_model(CloudEnvironmentCatalog::new);
-    app.add_singleton_model(UserWorkspaces::default_mock);
+    app.add_singleton_model(create_user_workspaces);
     app.add_singleton_model(|_ctx| UserProfiles::new(Vec::new()));
     app.add_singleton_model(TeamTesterStatus::mock);
     app.add_singleton_model(TeamUpdateManager::mock);

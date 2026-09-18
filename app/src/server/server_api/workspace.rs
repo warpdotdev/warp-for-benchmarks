@@ -8,6 +8,10 @@ use warp_graphql::mutations::purchase_addon_credits::{
     PurchaseAddonCredits, PurchaseAddonCreditsInput, PurchaseAddonCreditsResult,
     PurchaseAddonCreditsVariables,
 };
+use warp_graphql::mutations::remove_user_from_workspace::{
+    RemoveUserFromWorkspace, RemoveUserFromWorkspaceInput, RemoveUserFromWorkspaceResult,
+    RemoveUserFromWorkspaceVariables,
+};
 use warp_graphql::mutations::stripe_billing_portal::{
     StripeBillingPortal, StripeBillingPortalInput, StripeBillingPortalResult,
     StripeBillingPortalVariables,
@@ -23,10 +27,13 @@ use warp_graphql::queries::get_ai_overages_for_workspace::{
 
 use super::ServerApi;
 use super::team::TeamClient;
+use crate::auth::UserUid;
 use crate::server::graphql::{get_request_context, get_user_facing_error_message};
 use crate::server::ids::ServerId;
-use crate::workspaces::user_workspaces::WorkspacesMetadataResponse;
-use crate::workspaces::workspace::AiOverages;
+use crate::workspaces::user_workspaces::{
+    WorkspacesMetadataResponse, WorkspacesMetadataWithPricing,
+};
+use crate::workspaces::workspace::{AiOverages, WorkspaceUid};
 
 /// Outcome of a successful `purchaseAddonCredits` mutation. Mirrors the
 /// server's `PurchaseAddonCreditsResult` union members one-to-one.
@@ -68,11 +75,47 @@ pub trait WorkspaceClient: 'static + Send + Sync {
         max_monthly_spend_cents: Option<i32>,
         selected_auto_reload_credit_denomination: Option<i32>,
     ) -> Result<WorkspacesMetadataResponse>;
+
+    async fn remove_user_from_workspace(
+        &self,
+        user_uid: UserUid,
+        workspace_uid: WorkspaceUid,
+    ) -> Result<WorkspacesMetadataWithPricing>;
 }
 
 #[cfg_attr(not(target_family = "wasm"), async_trait)]
 #[cfg_attr(target_family = "wasm", async_trait(?Send))]
 impl WorkspaceClient for ServerApi {
+    async fn remove_user_from_workspace(
+        &self,
+        user_uid: UserUid,
+        workspace_uid: WorkspaceUid,
+    ) -> Result<WorkspacesMetadataWithPricing> {
+        let variables = RemoveUserFromWorkspaceVariables {
+            input: RemoveUserFromWorkspaceInput {
+                user_uid: user_uid.as_str().into(),
+                workspace_uid: String::from(workspace_uid).into(),
+            },
+            request_context: get_request_context(),
+        };
+        let operation = RemoveUserFromWorkspace::build(variables);
+        let response = self.send_graphql_request(operation, None).await?;
+
+        match response.remove_user_from_workspace {
+            RemoveUserFromWorkspaceResult::RemoveUserFromWorkspaceOutput(output)
+                if output.success =>
+            {
+                TeamClient::workspaces_metadata(self).await
+            }
+            RemoveUserFromWorkspaceResult::RemoveUserFromWorkspaceOutput(_) => {
+                Err(anyhow!("Failed to remove workspace member"))
+            }
+            RemoveUserFromWorkspaceResult::UserFacingError(error) => {
+                Err(anyhow!(get_user_facing_error_message(error)))
+            }
+            RemoveUserFromWorkspaceResult::Unknown => Err(anyhow!("Unknown error")),
+        }
+    }
     async fn generate_stripe_billing_portal_link(&self, team_uid: ServerId) -> Result<String> {
         let variables = StripeBillingPortalVariables {
             input: StripeBillingPortalInput {

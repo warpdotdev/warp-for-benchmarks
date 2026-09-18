@@ -2,14 +2,28 @@
 use std::cell::RefCell;
 #[cfg(not(target_family = "wasm"))]
 use std::rc::Rc;
+#[cfg(not(target_family = "wasm"))]
+use std::sync::Arc;
+#[cfg(not(target_family = "wasm"))]
+use std::time::Duration;
 
 #[cfg(not(target_family = "wasm"))]
-use warpui::App;
+use warpui::{App, r#async::FutureExt};
 
 use super::*;
 #[cfg(not(target_family = "wasm"))]
-use crate::workspace::view::tests::{initialize_app, mock_workspace};
+use crate::server::server_api::team::MockTeamClient;
+#[cfg(not(target_family = "wasm"))]
+use crate::server::server_api::workspace::MockWorkspaceClient;
+#[cfg(not(target_family = "wasm"))]
+use crate::workspace::view::tests::{
+    initialize_app, initialize_app_with_user_workspaces, mock_workspace,
+};
 use crate::workspaces::team::TeamMember;
+#[cfg(not(target_family = "wasm"))]
+use crate::workspaces::user_workspaces::{
+    WorkspacesMetadataResponse, WorkspacesMetadataWithPricing,
+};
 use crate::workspaces::workspace::{
     EmailInvite, MultiAdminPolicy, NativeWorkspacesPolicy, Tier, WorkspaceMember,
     WorkspaceMemberUsageInfo,
@@ -194,6 +208,323 @@ fn owner_can_transfer_promote_and_remove_without_workspace_admin_role() {
 }
 
 #[test]
+fn team_only_admin_cannot_remove_member_from_native_workspace() {
+    let team = team_with_members(
+        vec![
+            member(ADMIN_EMAIL, MembershipRole::Admin),
+            member(MEMBER_EMAIL, MembershipRole::User),
+        ],
+        true,
+    );
+    let workspace = workspace_with_member(ADMIN_EMAIL, MembershipRole::User, true);
+
+    let items = TeamsPageView::team_to_item_list(&team, ADMIN_EMAIL, &workspace);
+
+    assert_eq!(
+        action_labels(&items, MEMBER_EMAIL),
+        vec!["Promote to admin", "Remove from team"]
+    );
+}
+
+#[cfg(not(target_family = "wasm"))]
+#[test]
+fn workspace_removal_confirmation_calls_workspace_client_and_shows_success() {
+    let target_user_uid = UserUid::new(MEMBER_EMAIL);
+    let mut team = team_with_members(
+        vec![
+            member(ADMIN_EMAIL, MembershipRole::User),
+            member(MEMBER_EMAIL, MembershipRole::User),
+        ],
+        true,
+    );
+    let team_uid = team.uid;
+    let mut workspace = admin_workspace(ADMIN_EMAIL);
+    workspace.members.push(WorkspaceMember {
+        uid: target_user_uid,
+        email: MEMBER_EMAIL.to_string(),
+        role: MembershipRole::User,
+        is_disabled: false,
+        usage_info: WorkspaceMemberUsageInfo {
+            is_unlimited: true,
+            request_limit: 0,
+            requests_used_since_last_refresh: 0,
+            is_request_limit_prorated: false,
+        },
+    });
+    workspace.teams = vec![team.clone()];
+    let workspace_uid = workspace.uid;
+    team.members.retain(|member| member.uid != target_user_uid);
+    let mut updated_workspace = workspace.clone();
+    updated_workspace
+        .members
+        .retain(|member| member.uid != target_user_uid);
+    updated_workspace.teams = vec![team];
+
+    App::test((), |mut app| async move {
+        let mut workspace_client = MockWorkspaceClient::new();
+        workspace_client
+            .expect_remove_user_from_workspace()
+            .withf(move |user_uid, uid| *user_uid == target_user_uid && *uid == workspace_uid)
+            .times(1)
+            .return_once(move |_, _| {
+                Ok(WorkspacesMetadataWithPricing {
+                    metadata: WorkspacesMetadataResponse {
+                        workspaces: vec![updated_workspace],
+                        joinable_teams: vec![],
+                        experiments: None,
+                        ai_credit_availability: None,
+                        user_purchase_policy: None,
+                    },
+                    pricing_info: None,
+                })
+            });
+        initialize_app_with_user_workspaces(&mut app, move |ctx| {
+            UserWorkspaces::mock(
+                Arc::new(MockTeamClient::new()),
+                Arc::new(workspace_client),
+                vec![workspace],
+                ctx,
+            )
+        });
+
+        let workspace_view = mock_workspace(&mut app);
+        let teams_page = workspace_view.update(&mut app, |_, ctx| {
+            ctx.add_typed_action_view(TeamsPageView::new)
+        });
+        let (sender, receiver) = async_channel::unbounded();
+        app.update(|ctx| {
+            ctx.subscribe_to_view(&teams_page, move |_, event, _| {
+                if let TeamsPageViewEvent::ShowToast { message, flavor } = event {
+                    let _ = sender.try_send((message.clone(), *flavor));
+                }
+            });
+        });
+
+        teams_page.update(&mut app, |teams_page, ctx| {
+            teams_page.handle_action(
+                &TeamsPageAction::RemoveUserFromWorkspace {
+                    user_uid: target_user_uid,
+                    workspace_uid,
+                    member_email: MEMBER_EMAIL.to_string(),
+                    workspace_name: "Test Workspace".to_string(),
+                },
+                ctx,
+            );
+            assert!(teams_page.get_modal_content().is_some());
+            teams_page.handle_cloud_action_confirmation_dialog_event(
+                &CloudActionConfirmationDialogEvent::Confirm,
+                ctx,
+            );
+        });
+
+        let toast = receiver
+            .recv()
+            .with_timeout(Duration::from_secs(5))
+            .await
+            .expect("timed out waiting for workspace removal success toast")
+            .expect("workspace removal success toast sender dropped");
+
+        assert_eq!(
+            toast,
+            ("Removed workspace member".to_string(), ToastFlavor::Success)
+        );
+        app.read(|ctx| {
+            let user_workspaces = UserWorkspaces::as_ref(ctx);
+            assert!(user_workspaces.team_from_uid(team_uid).is_some_and(|team| {
+                team.members
+                    .iter()
+                    .all(|member| member.uid != target_user_uid)
+            }));
+            assert!(
+                user_workspaces
+                    .current_workspace()
+                    .is_some_and(|workspace| {
+                        workspace
+                            .members
+                            .iter()
+                            .all(|member| member.uid != target_user_uid)
+                    })
+            );
+        });
+    });
+}
+
+#[cfg(not(target_family = "wasm"))]
+#[test]
+fn workspace_removal_confirmation_preserves_state_and_shows_rejection() {
+    let target_user_uid = UserUid::new(MEMBER_EMAIL);
+    let team = team_with_members(
+        vec![
+            member(ADMIN_EMAIL, MembershipRole::User),
+            member(MEMBER_EMAIL, MembershipRole::User),
+        ],
+        true,
+    );
+    let team_uid = team.uid;
+    let mut workspace = admin_workspace(ADMIN_EMAIL);
+    workspace.teams = vec![team];
+    workspace.members.push(WorkspaceMember {
+        uid: target_user_uid,
+        email: MEMBER_EMAIL.to_string(),
+        role: MembershipRole::User,
+        is_disabled: false,
+        usage_info: WorkspaceMemberUsageInfo {
+            is_unlimited: true,
+            request_limit: 0,
+            requests_used_since_last_refresh: 0,
+            is_request_limit_prorated: false,
+        },
+    });
+    let workspace_uid = workspace.uid;
+
+    App::test((), |mut app| async move {
+        let mut workspace_client = MockWorkspaceClient::new();
+        workspace_client
+            .expect_remove_user_from_workspace()
+            .withf(move |user_uid, uid| *user_uid == target_user_uid && *uid == workspace_uid)
+            .times(1)
+            .return_once(|_, _| Err(anyhow::anyhow!("workspace removal rejected")));
+        initialize_app_with_user_workspaces(&mut app, move |ctx| {
+            UserWorkspaces::mock(
+                Arc::new(MockTeamClient::new()),
+                Arc::new(workspace_client),
+                vec![workspace],
+                ctx,
+            )
+        });
+
+        let workspace_view = mock_workspace(&mut app);
+        let teams_page = workspace_view.update(&mut app, |_, ctx| {
+            ctx.add_typed_action_view(TeamsPageView::new)
+        });
+        let (sender, receiver) = async_channel::unbounded();
+        app.update(|ctx| {
+            ctx.subscribe_to_view(&teams_page, move |_, event, _| {
+                if let TeamsPageViewEvent::ShowToast { message, flavor } = event {
+                    let _ = sender.try_send((message.clone(), *flavor));
+                }
+            });
+        });
+
+        teams_page.update(&mut app, |teams_page, ctx| {
+            teams_page.handle_action(
+                &TeamsPageAction::RemoveUserFromWorkspace {
+                    user_uid: target_user_uid,
+                    workspace_uid,
+                    member_email: MEMBER_EMAIL.to_string(),
+                    workspace_name: "Test Workspace".to_string(),
+                },
+                ctx,
+            );
+            assert!(teams_page.get_modal_content().is_some());
+            teams_page.handle_cloud_action_confirmation_dialog_event(
+                &CloudActionConfirmationDialogEvent::Confirm,
+                ctx,
+            );
+        });
+
+        let toast = receiver
+            .recv()
+            .with_timeout(Duration::from_secs(5))
+            .await
+            .expect("timed out waiting for workspace removal rejection toast")
+            .expect("workspace removal rejection toast sender dropped");
+
+        assert_eq!(
+            toast,
+            (
+                "Failed to remove workspace member: workspace removal rejected".to_string(),
+                ToastFlavor::Error
+            )
+        );
+        app.read(|ctx| {
+            let user_workspaces = UserWorkspaces::as_ref(ctx);
+            assert!(user_workspaces.team_from_uid(team_uid).is_some_and(|team| {
+                team.members
+                    .iter()
+                    .any(|member| member.uid == target_user_uid)
+            }));
+            assert!(
+                user_workspaces
+                    .current_workspace()
+                    .is_some_and(|workspace| {
+                        workspace
+                            .members
+                            .iter()
+                            .any(|member| member.uid == target_user_uid)
+                    })
+            );
+        });
+    });
+}
+
+#[test]
+fn workspace_owner_target_cannot_be_removed_from_workspace() {
+    let team = team_with_members(
+        vec![
+            member(ADMIN_EMAIL, MembershipRole::User),
+            member(MEMBER_EMAIL, MembershipRole::User),
+        ],
+        true,
+    );
+    let mut workspace = admin_workspace(ADMIN_EMAIL);
+    workspace.members.push(WorkspaceMember {
+        uid: UserUid::new(MEMBER_EMAIL),
+        email: MEMBER_EMAIL.to_string(),
+        role: MembershipRole::Owner,
+        is_disabled: false,
+        usage_info: WorkspaceMemberUsageInfo {
+            is_unlimited: true,
+            request_limit: 0,
+            requests_used_since_last_refresh: 0,
+            is_request_limit_prorated: false,
+        },
+    });
+
+    let items = TeamsPageView::team_to_item_list(&team, ADMIN_EMAIL, &workspace);
+
+    assert_eq!(
+        action_labels(&items, MEMBER_EMAIL),
+        vec!["Promote to admin", "Remove from team"]
+    );
+}
+
+#[test]
+fn team_owner_target_keeps_all_removal_protections() {
+    let team = team_with_members(
+        vec![
+            member(ADMIN_EMAIL, MembershipRole::User),
+            member(OWNER_EMAIL, MembershipRole::Owner),
+        ],
+        true,
+    );
+    let workspace = admin_workspace(ADMIN_EMAIL);
+
+    let items = TeamsPageView::team_to_item_list(&team, ADMIN_EMAIL, &workspace);
+
+    assert!(action_labels(&items, OWNER_EMAIL).is_empty());
+}
+
+#[test]
+fn non_native_workspace_has_only_team_removal_action() {
+    let team = team_with_members(
+        vec![
+            member(ADMIN_EMAIL, MembershipRole::User),
+            member(MEMBER_EMAIL, MembershipRole::User),
+        ],
+        true,
+    );
+    let workspace = workspace_with_member(ADMIN_EMAIL, MembershipRole::Admin, false);
+
+    let items = TeamsPageView::team_to_item_list(&team, ADMIN_EMAIL, &workspace);
+
+    assert_eq!(
+        action_labels(&items, MEMBER_EMAIL),
+        vec!["Promote to admin", "Remove from team"]
+    );
+}
+
+#[test]
 fn team_admin_can_promote_and_remove_without_workspace_admin_role() {
     let team = team_with_members(
         vec![
@@ -245,11 +576,19 @@ fn workspace_admin_without_team_role_can_promote_demote_and_remove() {
 
     assert_eq!(
         action_labels(&items, "regular@example.com"),
-        vec!["Promote to admin", "Remove from team"]
+        vec![
+            "Promote to admin",
+            "Remove from team",
+            "Remove from workspace"
+        ]
     );
     assert_eq!(
         action_labels(&items, ADMIN_EMAIL),
-        vec!["Demote from admin", "Remove from team"]
+        vec![
+            "Demote from admin",
+            "Remove from team",
+            "Remove from workspace"
+        ]
     );
 }
 
@@ -318,7 +657,7 @@ fn workspace_admin_without_multi_admin_plan_can_remove_but_not_promote() {
     // workspace-admin override.
     assert_eq!(
         action_labels(&items, "regular@example.com"),
-        vec!["Remove from team"]
+        vec!["Remove from team", "Remove from workspace"]
     );
 }
 
