@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 #[cfg(not(target_family = "wasm"))]
-use warpui::App;
+use warpui::{App, r#async::FutureExt};
 
 use super::*;
 #[cfg(not(target_family = "wasm"))]
@@ -317,10 +317,15 @@ fn workspace_removal_confirmation_calls_workspace_client_and_shows_success() {
             );
         });
 
-        warpui::r#async::Timer::after(Duration::from_millis(100)).await;
+        let toast = receiver
+            .recv()
+            .with_timeout(Duration::from_secs(5))
+            .await
+            .expect("timed out waiting for workspace removal success toast")
+            .expect("workspace removal success toast sender dropped");
 
         assert_eq!(
-            receiver.try_recv().expect("expected a success toast"),
+            toast,
             ("Removed workspace member".to_string(), ToastFlavor::Success)
         );
         app.read(|ctx| {
@@ -418,10 +423,15 @@ fn workspace_removal_confirmation_preserves_state_and_shows_rejection() {
             );
         });
 
-        warpui::r#async::Timer::after(Duration::from_millis(100)).await;
+        let toast = receiver
+            .recv()
+            .with_timeout(Duration::from_secs(5))
+            .await
+            .expect("timed out waiting for workspace removal rejection toast")
+            .expect("workspace removal rejection toast sender dropped");
 
         assert_eq!(
-            receiver.try_recv().expect("expected an error toast"),
+            toast,
             (
                 "Failed to remove workspace member: workspace removal rejected".to_string(),
                 ToastFlavor::Error
