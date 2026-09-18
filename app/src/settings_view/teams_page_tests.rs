@@ -194,6 +194,37 @@ fn owner_can_transfer_promote_and_remove_without_workspace_admin_role() {
 }
 
 #[test]
+fn workspace_owner_is_not_offered_workspace_removal() {
+    let team = team_with_members(
+        vec![
+            member(ADMIN_EMAIL, MembershipRole::User),
+            member(OWNER_EMAIL, MembershipRole::User),
+        ],
+        true,
+    );
+    let mut workspace = admin_workspace(ADMIN_EMAIL);
+    workspace.members.push(WorkspaceMember {
+        uid: UserUid::new(OWNER_EMAIL),
+        email: OWNER_EMAIL.to_string(),
+        role: MembershipRole::Owner,
+        is_disabled: false,
+        usage_info: WorkspaceMemberUsageInfo {
+            is_unlimited: true,
+            request_limit: 0,
+            requests_used_since_last_refresh: 0,
+            is_request_limit_prorated: false,
+        },
+    });
+
+    let items = TeamsPageView::team_to_item_list(&team, ADMIN_EMAIL, &workspace);
+
+    assert_eq!(
+        action_labels(&items, OWNER_EMAIL),
+        vec!["Promote to admin", "Remove from team"]
+    );
+}
+
+#[test]
 fn team_admin_can_promote_and_remove_without_workspace_admin_role() {
     let team = team_with_members(
         vec![
@@ -245,11 +276,19 @@ fn workspace_admin_without_team_role_can_promote_demote_and_remove() {
 
     assert_eq!(
         action_labels(&items, "regular@example.com"),
-        vec!["Promote to admin", "Remove from team"]
+        vec![
+            "Promote to admin",
+            "Remove from team",
+            "Remove from workspace"
+        ]
     );
     assert_eq!(
         action_labels(&items, ADMIN_EMAIL),
-        vec!["Demote from admin", "Remove from team"]
+        vec![
+            "Demote from admin",
+            "Remove from team",
+            "Remove from workspace"
+        ]
     );
 }
 
@@ -318,7 +357,7 @@ fn workspace_admin_without_multi_admin_plan_can_remove_but_not_promote() {
     // workspace-admin override.
     assert_eq!(
         action_labels(&items, "regular@example.com"),
-        vec!["Remove from team"]
+        vec!["Remove from team", "Remove from workspace"]
     );
 }
 
