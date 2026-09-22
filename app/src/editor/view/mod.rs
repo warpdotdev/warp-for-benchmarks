@@ -39,10 +39,11 @@ use snapshot::{EditorHeightShrinkDelay, ViewSnapshot};
 use string_offset::{ByteOffset, CharOffset};
 use vec1::{Vec1, vec1};
 use vim::vim::{
-    BracketChar, CharacterMotion, Direction, FindCharMotion, FirstNonWhitespaceMotion,
-    InsertPosition, LineMotion, ModeTransition, MotionType, TextObjectInclusion, TextObjectType,
-    VimHandler, VimMode, VimModel, VimMotion, VimOperand, VimOperator, VimState, VimSubscriber,
-    VimTextObject, WordBound, WordMotion, WordType,
+    BracketChar, CharacterMotion, CharacterNavigation, Direction, FindCharMotion,
+    FirstNonWhitespaceMotion, InsertPosition, LineMotion, LineNavigation, ModeTransition,
+    MotionType, TextObjectInclusion, TextObjectType, VimHandler, VimMode, VimModel, VimMotion,
+    VimOperand, VimOperator, VimState, VimSubscriber, VimTextObject, WordBound, WordMotion,
+    WordType,
 };
 use vim::{
     vim_a_block, vim_a_paragraph, vim_a_quote, vim_a_word, vim_inner_block, vim_inner_paragraph,
@@ -2081,44 +2082,22 @@ impl VimHandler for EditorView {
             return;
         }
 
-        self.change_selections(ctx, |editor_model, ctx| {
-            match motion {
-                CharacterMotion::Left => {
-                    editor_model.move_cursors_by_offset(
-                        character_count,
-                        &Direction::Backward,
-                        /* keep_selection */ false,
-                        /* stop_at_line_boundary */ true,
-                        ctx,
-                    )
-                }
-                CharacterMotion::Right => {
-                    editor_model.move_cursors_by_offset(
-                        character_count,
-                        &Direction::Forward,
-                        /* keep_selection */ false,
-                        /* stop_at_line_boundary */ true,
-                        ctx,
-                    )
-                }
-                CharacterMotion::WrappingLeft => {
-                    editor_model.move_cursor_ignoring_newlines(
-                        character_count,
-                        &Direction::Backward,
-                        /* keep_selection */ false,
-                        ctx,
-                    )
-                }
-                CharacterMotion::WrappingRight => {
-                    editor_model.move_cursor_ignoring_newlines(
-                        character_count,
-                        &Direction::Forward,
-                        /* keep_selection */ false,
-                        ctx,
-                    )
-                }
-                CharacterMotion::Up => editor_model.move_up_by_offset(character_count, ctx),
-                CharacterMotion::Down => editor_model.move_down_by_offset(character_count, ctx),
+        self.change_selections(ctx, |editor_model, ctx| match motion.navigation() {
+            CharacterNavigation::Horizontal {
+                direction,
+                stop_at_line_boundary: true,
+            } => editor_model.move_cursors_by_offset(character_count, &direction, false, true, ctx),
+            CharacterNavigation::Horizontal {
+                direction,
+                stop_at_line_boundary: false,
+            } => {
+                editor_model.move_cursor_ignoring_newlines(character_count, &direction, false, ctx)
+            }
+            CharacterNavigation::Vertical(Direction::Backward) => {
+                editor_model.move_up_by_offset(character_count, ctx)
+            }
+            CharacterNavigation::Vertical(Direction::Forward) => {
+                editor_model.move_down_by_offset(character_count, ctx)
             }
         });
     }
@@ -2138,20 +2117,20 @@ impl VimHandler for EditorView {
     }
 
     fn navigate_line(&mut self, line_count: u32, motion: &LineMotion, ctx: &mut ViewContext<Self>) {
-        match motion {
-            LineMotion::Start => self.move_to_line_start(ctx),
-            LineMotion::FirstNonWhitespace => {
+        match motion.navigation(line_count) {
+            LineNavigation::Start => self.move_to_line_start(ctx),
+            LineNavigation::FirstNonWhitespace => {
                 self.change_selections(ctx, |editor_model, ctx| {
                     editor_model.cursor_line_start_non_whitespace(false, ctx);
                 });
             }
-            LineMotion::End => {
+            LineNavigation::End { lines_forward } => {
                 if self.single_cursor_at_autosuggestion_beginning(ctx) {
                     self.insert_full_autosuggestion(ctx);
                 } else {
                     // Only moving to the end of the line ($) uses number-repeat.
                     self.change_selections(ctx, |editor_model, ctx| {
-                        editor_model.move_down_by_offset(line_count.saturating_sub(1), ctx);
+                        editor_model.move_down_by_offset(lines_forward, ctx);
                         editor_model.cursor_line_end(false, ctx);
                     });
                 }
@@ -2166,12 +2145,10 @@ impl VimHandler for EditorView {
         ctx: &mut ViewContext<Self>,
     ) {
         self.change_selections(ctx, |editor_model, ctx| {
-            match motion {
-                FirstNonWhitespaceMotion::Up => editor_model.move_up_by_offset(count, ctx),
-                FirstNonWhitespaceMotion::Down => editor_model.move_down_by_offset(count, ctx),
-                FirstNonWhitespaceMotion::DownMinusOne => {
-                    editor_model.move_down_by_offset(count - 1, ctx)
-                }
+            let (direction, count) = motion.navigation(count);
+            match direction {
+                Direction::Backward => editor_model.move_up_by_offset(count, ctx),
+                Direction::Forward => editor_model.move_down_by_offset(count, ctx),
             };
             editor_model.cursor_line_start_non_whitespace(false /* keep_selection */, ctx);
         });

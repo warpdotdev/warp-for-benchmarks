@@ -1,5 +1,28 @@
 use super::*;
 
+#[test]
+fn navigation_plans_preserve_motion_semantics() {
+    assert_eq!(
+        CharacterMotion::WrappingRight.navigation(),
+        CharacterNavigation::Horizontal {
+            direction: Direction::Forward,
+            stop_at_line_boundary: false,
+        }
+    );
+    assert_eq!(
+        CharacterMotion::Up.navigation(),
+        CharacterNavigation::Vertical(Direction::Backward)
+    );
+    assert_eq!(
+        LineMotion::End.navigation(3),
+        LineNavigation::End { lines_forward: 2 }
+    );
+    assert_eq!(
+        FirstNonWhitespaceMotion::DownMinusOne.navigation(1),
+        (Direction::Forward, 0)
+    );
+}
+
 fn type_chars(fsa: &mut VimFSA, chars: &str) -> Vec<VimEvent> {
     chars
         .chars()
