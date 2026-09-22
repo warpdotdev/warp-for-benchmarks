@@ -160,6 +160,21 @@ pub enum FirstNonWhitespaceMotion {
     DownMinusOne,
 }
 
+#[derive(Clone, Debug)]
+pub enum VimNavigation {
+    Character(u32, CharacterMotion),
+    Word(u32, WordMotion),
+    Line(u32, LineMotion),
+    FirstNonWhitespace(u32, FirstNonWhitespaceMotion),
+    FindChar(u32, FindCharMotion),
+    Paragraph(u32, Direction),
+    FirstLine,
+    LastLine,
+    LineNumber(u32),
+    MatchingBracket,
+    UnmatchedBracket(BracketChar),
+}
+
 /// Motions for "f", "F", "t", and "T".
 #[derive(Clone, Debug)]
 pub struct FindCharMotion {
@@ -2101,36 +2116,52 @@ pub trait VimHandler {
     /// A character to be inserted to the buffer.
     fn insert_char(&mut self, c: char, ctx: &mut ViewContext<Self>);
     /// A one-character motion of the cursor.
+    fn navigate(&mut self, navigation: VimNavigation, ctx: &mut ViewContext<Self>);
     fn navigate_char(
         &mut self,
         count: u32,
         character_motion: &CharacterMotion,
         ctx: &mut ViewContext<Self>,
-    );
+    ) {
+        self.navigate(VimNavigation::Character(count, *character_motion), ctx);
+    }
     /// Word-related motion of the cursor.
-    fn navigate_word(&mut self, count: u32, word_motion: &WordMotion, ctx: &mut ViewContext<Self>);
+    fn navigate_word(&mut self, count: u32, word_motion: &WordMotion, ctx: &mut ViewContext<Self>) {
+        self.navigate(VimNavigation::Word(count, word_motion.clone()), ctx);
+    }
     /// Motions within the current line: 0, ^, $
-    fn navigate_line(&mut self, count: u32, line_motion: &LineMotion, ctx: &mut ViewContext<Self>);
+    fn navigate_line(&mut self, count: u32, line_motion: &LineMotion, ctx: &mut ViewContext<Self>) {
+        self.navigate(VimNavigation::Line(count, *line_motion), ctx);
+    }
     fn first_nonwhitespace_motion(
         &mut self,
         count: u32,
         motion: &FirstNonWhitespaceMotion,
         ctx: &mut ViewContext<Self>,
-    );
+    ) {
+        self.navigate(VimNavigation::FirstNonWhitespace(count, *motion), ctx);
+    }
     /// Motions to a particular character on the current line.
     fn find_char(
         &mut self,
         occurrence_count: u32,
         find_char_motion: &FindCharMotion,
         ctx: &mut ViewContext<Self>,
-    );
+    ) {
+        self.navigate(
+            VimNavigation::FindChar(occurrence_count, find_char_motion.clone()),
+            ctx,
+        );
+    }
     /// Navigate by paragraph: { and }.
     fn navigate_paragraph(
         &mut self,
         count: u32,
         direction: &Direction,
         ctx: &mut ViewContext<Self>,
-    );
+    ) {
+        self.navigate(VimNavigation::Paragraph(count, *direction), ctx);
+    }
     /// For all "operator commands", e.g. d, c, y. See ":help operator" in Vim, or click here:
     /// https://vimdoc.sourceforge.net/htmldoc/motion.html#operator
     fn operation(
@@ -2192,11 +2223,21 @@ pub trait VimHandler {
         ctx: &mut ViewContext<Self>,
     );
     fn visual_text_object(&mut self, text_object: &VimTextObject, ctx: &mut ViewContext<Self>);
-    fn jump_to_first_line(&mut self, ctx: &mut ViewContext<Self>);
-    fn jump_to_last_line(&mut self, ctx: &mut ViewContext<Self>);
-    fn jump_to_line(&mut self, line_number: u32, ctx: &mut ViewContext<Self>);
-    fn jump_to_matching_bracket(&mut self, ctx: &mut ViewContext<Self>);
-    fn jump_to_unmatched_bracket(&mut self, bracket: &BracketChar, ctx: &mut ViewContext<Self>);
+    fn jump_to_first_line(&mut self, ctx: &mut ViewContext<Self>) {
+        self.navigate(VimNavigation::FirstLine, ctx);
+    }
+    fn jump_to_last_line(&mut self, ctx: &mut ViewContext<Self>) {
+        self.navigate(VimNavigation::LastLine, ctx);
+    }
+    fn jump_to_line(&mut self, line_number: u32, ctx: &mut ViewContext<Self>) {
+        self.navigate(VimNavigation::LineNumber(line_number), ctx);
+    }
+    fn jump_to_matching_bracket(&mut self, ctx: &mut ViewContext<Self>) {
+        self.navigate(VimNavigation::MatchingBracket, ctx);
+    }
+    fn jump_to_unmatched_bracket(&mut self, bracket: &BracketChar, ctx: &mut ViewContext<Self>) {
+        self.navigate(VimNavigation::UnmatchedBracket(bracket.clone()), ctx);
+    }
     fn paste(
         &mut self,
         count: u32,
