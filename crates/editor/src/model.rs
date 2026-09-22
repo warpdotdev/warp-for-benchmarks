@@ -977,6 +977,10 @@ pub trait RichTextEditorModel: CoreEditorModel {
                 Err(_) => return None,
             };
 
+            if new_formatted.lines.is_empty() {
+                return None;
+            }
+
             let delta = compute_formatted_text_delta(old_formatted, new_formatted);
             Some(delta)
         })();
