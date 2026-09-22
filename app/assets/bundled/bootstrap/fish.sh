@@ -591,6 +591,10 @@ function warp_run_external_ctrl_r_widget
       fzf-history-widget
       set result (commandline | string collect)
       commandline -r ''
+    case '_fzf_search_history'
+      _fzf_search_history
+      set result (commandline | string collect)
+      commandline -r ''
     case '_atuin_search'
       # atuin writes its TUI to stdout and the selection to fd 3, so the two are swapped here to
       # leave the UI on the terminal and capture only the selection.
@@ -676,9 +680,11 @@ function warp_bootstrapped
   set -g _WARP_EXTERNAL_CTRL_R_WIDGET ""
   set -l warp_ctrl_r_widget (warp_external_ctrl_r_widget)
   switch "$warp_ctrl_r_widget"
-    case 'fzf-history-widget' '_atuin_search'
-      set -g _WARP_EXTERNAL_CTRL_R_WIDGET "$warp_ctrl_r_widget"
-      set -a shell_plugins external_ctrl_r_history
+    case 'fzf-history-widget' '_fzf_search_history' '_atuin_search'
+      if functions -q "$warp_ctrl_r_widget"
+        set -g _WARP_EXTERNAL_CTRL_R_WIDGET "$warp_ctrl_r_widget"
+        set -a shell_plugins external_ctrl_r_history
+      end
   end
 
   set -g _WARP_EXTERNAL_CTRL_T_WIDGET ""
