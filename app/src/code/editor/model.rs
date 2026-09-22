@@ -4356,6 +4356,122 @@ impl PlainTextEditorModel for CodeEditorModel {
     }
 }
 
+impl CodeEditorModel {
+    pub fn vim_navigate_char(
+        &mut self,
+        count: u32,
+        character_motion: &CharacterMotion,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        match character_motion {
+            CharacterMotion::Right => {
+                self.vim_move_horizontal_by_offset(count, &Direction::Forward, false, true, ctx);
+            }
+            CharacterMotion::Left => {
+                self.vim_move_horizontal_by_offset(count, &Direction::Backward, false, true, ctx);
+            }
+            CharacterMotion::WrappingRight => {
+                self.vim_move_horizontal_by_offset(count, &Direction::Forward, false, false, ctx);
+            }
+            CharacterMotion::WrappingLeft => {
+                self.vim_move_horizontal_by_offset(count, &Direction::Backward, false, false, ctx);
+            }
+            CharacterMotion::Up => {
+                self.vim_move_vertical_by_offset(count, TextDirection::Backwards, false, ctx);
+            }
+            CharacterMotion::Down => {
+                self.vim_move_vertical_by_offset(count, TextDirection::Forwards, false, ctx);
+            }
+        }
+    }
+
+    pub fn vim_navigate_line(
+        &mut self,
+        line_count: u32,
+        motion: &LineMotion,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        match motion {
+            LineMotion::Start => self.vim_move_to_line_bound(LineBound::Start, false, ctx),
+            LineMotion::FirstNonWhitespace => self.vim_move_to_first_nonwhitespace(false, ctx),
+            LineMotion::End => {
+                self.vim_move_vertical_by_offset(
+                    line_count.saturating_sub(1),
+                    TextDirection::Forwards,
+                    false,
+                    ctx,
+                );
+                self.vim_move_to_line_bound(LineBound::End, false, ctx);
+            }
+        }
+    }
+
+    pub fn vim_first_nonwhitespace_motion(
+        &mut self,
+        count: u32,
+        motion: &FirstNonWhitespaceMotion,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        match motion {
+            FirstNonWhitespaceMotion::Up => {
+                self.vim_move_vertical_by_offset(count, TextDirection::Backwards, false, ctx);
+            }
+            FirstNonWhitespaceMotion::Down => {
+                self.vim_move_vertical_by_offset(count, TextDirection::Forwards, false, ctx);
+            }
+            FirstNonWhitespaceMotion::DownMinusOne => {
+                self.vim_move_vertical_by_offset(count - 1, TextDirection::Forwards, false, ctx);
+            }
+        }
+        self.vim_move_to_first_nonwhitespace(false, ctx);
+    }
+
+    pub fn vim_find_char_motion(
+        &mut self,
+        occurrence_count: u32,
+        find_char_motion: &FindCharMotion,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        self.vim_find_char(false, occurrence_count, find_char_motion, ctx);
+    }
+
+    pub fn vim_navigate_paragraph_motion(
+        &mut self,
+        count: u32,
+        direction: &Direction,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        self.vim_move_by_paragraph(count, direction, false, ctx);
+    }
+
+    pub fn vim_jump_to_first_line_motion(&mut self, ctx: &mut ModelContext<Self>) {
+        self.jump_to_line_column(0, None, ctx);
+    }
+
+    pub fn vim_jump_to_last_line_motion(&mut self, ctx: &mut ModelContext<Self>) {
+        self.vim_move_to_last_line(ctx);
+    }
+
+    pub fn vim_jump_to_line_motion(&mut self, line_number: u32, ctx: &mut ModelContext<Self>) {
+        let buffer = self.content().as_ref(ctx);
+        let max_row = buffer.max_point().row;
+        let row = line_number.max(1).min(max_row);
+        self.jump_to_line_column(row as usize, None, ctx);
+    }
+
+    pub fn vim_jump_to_matching_bracket_motion(&mut self, ctx: &mut ModelContext<Self>) {
+        self.vim_jump_to_matching_bracket(false, ctx);
+    }
+
+    pub fn vim_jump_to_unmatched_bracket_motion(
+        &mut self,
+        bracket: &BracketChar,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        self.vim_jump_to_unmatched_bracket(bracket, false, ctx);
+    }
+}
+
 impl Entity for CodeEditorModel {
     type Event = CodeEditorModelEvent;
 }

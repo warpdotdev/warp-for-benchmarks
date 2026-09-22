@@ -97,31 +97,22 @@ impl VimHandler for TuiInputView {
     }
 
     fn navigate_word(&mut self, count: u32, word_motion: &WordMotion, ctx: &mut ViewContext<Self>) {
-        let WordMotion {
-            direction,
-            bound,
-            word_type,
-        } = word_motion;
         self.model.update(ctx, |model, ctx| {
-            model.vim_navigate_word(*direction, *bound, *word_type, count, ctx);
+            model.vim_navigate_word(
+                word_motion.direction,
+                word_motion.bound,
+                word_motion.word_type,
+                count,
+                ctx,
+            );
         });
         self.follow_cursor(ctx);
         ctx.notify();
     }
 
     fn navigate_line(&mut self, line_count: u32, motion: &LineMotion, ctx: &mut ViewContext<Self>) {
-        self.model.update(ctx, |model, ctx| match motion {
-            LineMotion::Start => model.vim_move_to_line_bound(LineBound::Start, false, ctx),
-            LineMotion::FirstNonWhitespace => model.vim_move_to_first_nonwhitespace(false, ctx),
-            LineMotion::End => {
-                model.vim_move_vertical_by_offset(
-                    line_count.saturating_sub(1),
-                    TextDirection::Forwards,
-                    false,
-                    ctx,
-                );
-                model.vim_move_to_line_bound(LineBound::End, false, ctx);
-            }
+        self.model.update(ctx, |model, ctx| {
+            model.vim_navigate_line(line_count, motion, ctx);
         });
         self.follow_cursor(ctx);
         ctx.notify();
@@ -134,23 +125,7 @@ impl VimHandler for TuiInputView {
         ctx: &mut ViewContext<Self>,
     ) {
         self.model.update(ctx, |model, ctx| {
-            match motion {
-                FirstNonWhitespaceMotion::Up => {
-                    model.vim_move_vertical_by_offset(count, TextDirection::Backwards, false, ctx);
-                }
-                FirstNonWhitespaceMotion::Down => {
-                    model.vim_move_vertical_by_offset(count, TextDirection::Forwards, false, ctx);
-                }
-                FirstNonWhitespaceMotion::DownMinusOne => {
-                    model.vim_move_vertical_by_offset(
-                        count - 1,
-                        TextDirection::Forwards,
-                        false,
-                        ctx,
-                    );
-                }
-            }
-            model.vim_move_to_first_nonwhitespace(false, ctx);
+            model.vim_first_nonwhitespace_motion(count, motion, ctx);
         });
         self.follow_cursor(ctx);
         ctx.notify();
@@ -359,11 +334,12 @@ impl VimHandler for TuiInputView {
 
     fn jump_to_last_line(&mut self, ctx: &mut ViewContext<Self>) {
         self.model.update(ctx, |model, ctx| {
-            model.vim_move_to_last_line(ctx);
+            model.vim_jump_to_last_line_motion(ctx);
         });
         self.follow_cursor(ctx);
         ctx.notify();
     }
+
     fn jump_to_line(&mut self, line_number: u32, ctx: &mut ViewContext<Self>) {
         self.model.update(ctx, |model, ctx| {
             let last_line = model.content().as_ref(ctx).max_point().row as usize;
