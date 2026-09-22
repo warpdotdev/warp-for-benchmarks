@@ -972,17 +972,18 @@ pub trait RichTextEditorModel: CoreEditorModel {
             let old_formatted =
                 buffer.range_to_formatted_text(full_range, StyledBlockBoundaryBehavior::Inclusive);
 
-            let new_formatted = match parse_markdown(markdown) {
-                Ok(parsed) => parsed,
-                Err(_) => return None,
-            };
+            let new_formatted = parse_markdown(markdown).ok()?;
+
+            if new_formatted.lines.is_empty() {
+                return Some(None);
+            }
 
             let delta = compute_formatted_text_delta(old_formatted, new_formatted);
-            Some(delta)
+            Some(Some(delta))
         })();
 
         match delta_result {
-            Some(delta) => {
+            Some(Some(delta)) => {
                 // If there is nothing to change, bail out early.
                 if delta.is_noop() {
                     return;
@@ -1000,6 +1001,7 @@ pub trait RichTextEditorModel: CoreEditorModel {
                 );
                 self.validate(ctx);
             }
+            Some(None) => self.reset_with_markdown(markdown, ctx),
             None => {
                 // Fallback to the existing full-reset behavior if we fail to
                 // compute a delta (e.g. parse error).
