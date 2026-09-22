@@ -737,10 +737,12 @@ impl AIDocumentModel {
         };
 
         doc.title = new_title.to_owned();
-        let editor_handle = doc.editor.clone();
-        editor_handle.update(ctx, |editor, editor_ctx| {
-            editor.update_to_new_markdown(new_content, editor_ctx);
-        });
+        if !new_content.is_empty() {
+            let editor_handle = doc.editor.clone();
+            editor_handle.update(ctx, |editor, editor_ctx| {
+                editor.update_to_new_markdown(new_content, editor_ctx);
+            });
+        }
 
         ctx.emit(AIDocumentModelEvent::DocumentUpdated {
             document_id: *id,

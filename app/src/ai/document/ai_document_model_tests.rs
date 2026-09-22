@@ -851,3 +851,54 @@ fn test_plan_markdown_content_preserves_copyable_structure() {
         });
     });
 }
+
+#[test]
+fn test_streamed_agent_update_with_empty_content_does_not_panic() {
+    App::test((), |mut app| async move {
+        initialize_app_for_ai_document_tests(&mut app);
+        let model_handle = app.add_model(|_ctx| AIDocumentModel::new_for_test());
+
+        let conversation_id = AIConversationId::new();
+
+        let doc_id = model_handle.update(&mut app, |model, ctx| {
+            model.create_document(
+                "Test Doc",
+                "# Hello\nSome content",
+                conversation_id,
+                None,
+                ctx,
+            )
+        });
+
+        model_handle.update(&mut app, |model, ctx| {
+            model.apply_streamed_agent_update(&doc_id, "Test Doc", "", ctx);
+        });
+
+        let content = model_handle.read(&app, |model, app_ctx| {
+            model
+                .get_document_content(&doc_id, app_ctx)
+                .expect("document should still have content")
+        });
+        assert!(
+            !content.trim().is_empty(),
+            "buffer should retain its content when streamed update is empty"
+        );
+
+        model_handle.update(&mut app, |model, ctx| {
+            model.apply_streamed_agent_update(
+                &doc_id,
+                "Updated Title",
+                "# Updated\nNew content",
+                ctx,
+            );
+        });
+
+        let (title, content) = model_handle.read(&app, |model, app_ctx| {
+            let doc = model.get_current_document(&doc_id).unwrap();
+            let content = model.get_document_content(&doc_id, app_ctx).unwrap();
+            (doc.title.clone(), content)
+        });
+        assert_eq!(title, "Updated Title");
+        assert!(content.contains("Updated"));
+    });
+}
