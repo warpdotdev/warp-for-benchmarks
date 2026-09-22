@@ -499,3 +499,59 @@ fn test_image_with_content_html_serialization() {
         assert!(html.contains("Some text"));
     });
 }
+
+#[test]
+fn test_empty_markdown_delta_is_not_noop() {
+    App::test((), |mut app| async move {
+        let old_markdown = "# Hello\n\nSome content here\n";
+        let (buffer, _selection) = Buffer::mock_from_markdown(
+            old_markdown,
+            None,
+            Box::new(|_, _| IndentBehavior::Ignore),
+            &mut app,
+        );
+
+        let old_formatted = app.read_model(&buffer, |buffer, _| {
+            buffer.range_to_formatted_text(
+                CharOffset::from(1)..buffer.max_charoffset(),
+                StyledBlockBoundaryBehavior::Inclusive,
+            )
+        });
+
+        let new_formatted = parse_markdown("").unwrap();
+        assert!(
+            new_formatted.lines.is_empty(),
+            "empty markdown should produce empty formatted text"
+        );
+
+        let delta = compute_formatted_text_delta(old_formatted, new_formatted);
+        assert!(
+            !delta.is_noop(),
+            "replacing content with empty should not be a no-op"
+        );
+        assert_eq!(delta.common_prefix_lines, 0);
+        assert!(delta.new_suffix.is_empty());
+    });
+}
+
+#[test]
+fn test_reset_with_empty_markdown_preserves_buffer_invariant() {
+    App::test((), |mut app| async move {
+        let (buffer, selection) =
+            Buffer::mock_from_markdown("", None, Box::new(|_, _| IndentBehavior::Ignore), &mut app);
+
+        let (len, head) = app.read_model(&buffer, |buf, ctx| {
+            (buf.len(), selection.as_ref(ctx).first_selection_head())
+        });
+        assert_eq!(
+            len,
+            CharOffset::from(1),
+            "buffer should have the PlainText marker"
+        );
+        assert_eq!(
+            head,
+            CharOffset::from(1),
+            "selection should be after the marker"
+        );
+    });
+}
