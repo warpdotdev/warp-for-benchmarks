@@ -152,12 +152,75 @@ pub enum CharacterMotion {
     WrappingRight,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CharacterNavigation {
+    Horizontal {
+        direction: Direction,
+        stop_at_line_boundary: bool,
+    },
+    Vertical(Direction),
+}
+
+impl CharacterMotion {
+    pub fn navigation(self) -> CharacterNavigation {
+        match self {
+            Self::Left => CharacterNavigation::Horizontal {
+                direction: Direction::Backward,
+                stop_at_line_boundary: true,
+            },
+            Self::Right => CharacterNavigation::Horizontal {
+                direction: Direction::Forward,
+                stop_at_line_boundary: true,
+            },
+            Self::WrappingLeft => CharacterNavigation::Horizontal {
+                direction: Direction::Backward,
+                stop_at_line_boundary: false,
+            },
+            Self::WrappingRight => CharacterNavigation::Horizontal {
+                direction: Direction::Forward,
+                stop_at_line_boundary: false,
+            },
+            Self::Up => CharacterNavigation::Vertical(Direction::Backward),
+            Self::Down => CharacterNavigation::Vertical(Direction::Forward),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LineNavigation {
+    Start,
+    FirstNonWhitespace,
+    End { lines_forward: u32 },
+}
+
+impl LineMotion {
+    pub fn navigation(self, count: u32) -> LineNavigation {
+        match self {
+            Self::Start => LineNavigation::Start,
+            Self::FirstNonWhitespace => LineNavigation::FirstNonWhitespace,
+            Self::End => LineNavigation::End {
+                lines_forward: count.saturating_sub(1),
+            },
+        }
+    }
+}
+
 /// Motions "+", "-", "_"
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FirstNonWhitespaceMotion {
     Up,
     Down,
     DownMinusOne,
+}
+
+impl FirstNonWhitespaceMotion {
+    pub fn navigation(self, count: u32) -> (Direction, u32) {
+        match self {
+            Self::Up => (Direction::Backward, count),
+            Self::Down => (Direction::Forward, count),
+            Self::DownMinusOne => (Direction::Forward, count - 1),
+        }
+    }
 }
 
 /// Motions for "f", "F", "t", and "T".

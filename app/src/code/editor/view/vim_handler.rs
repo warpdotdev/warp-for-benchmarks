@@ -1,7 +1,8 @@
 use vim::vim::{
-    BracketChar, CharacterMotion, Direction, FindCharMotion, FirstNonWhitespaceMotion,
-    InsertPosition, LineMotion, ModeTransition, MotionType, TextObjectType, VimHandler, VimMode,
-    VimMotion, VimOperand, VimOperator, VimTextObject, WordMotion,
+    BracketChar, CharacterMotion, CharacterNavigation, Direction, FindCharMotion,
+    FirstNonWhitespaceMotion, InsertPosition, LineMotion, LineNavigation, ModeTransition,
+    MotionType, TextObjectType, VimHandler, VimMode, VimMotion, VimOperand, VimOperator,
+    VimTextObject, WordMotion,
 };
 use warp_editor::content::buffer::{
     AutoScrollBehavior, BufferEditAction, EditOrigin, SelectionOffsets, VimInsertPoint,
@@ -33,26 +34,26 @@ impl VimHandler for CodeEditorView {
         character_motion: &CharacterMotion,
         ctx: &mut ViewContext<Self>,
     ) {
-        self.model.update(ctx, |model, ctx| match character_motion {
-            CharacterMotion::Right => {
-                model.vim_move_horizontal_by_offset(count, &Direction::Forward, false, true, ctx);
-            }
-            CharacterMotion::Up => {
-                model.vim_move_vertical_by_offset(count, TextDirection::Backwards, false, ctx);
-            }
-            CharacterMotion::Down => {
-                model.vim_move_vertical_by_offset(count, TextDirection::Forwards, false, ctx);
-            }
-            CharacterMotion::Left => {
-                model.vim_move_horizontal_by_offset(count, &Direction::Backward, false, true, ctx);
-            }
-            CharacterMotion::WrappingLeft => {
-                model.vim_move_horizontal_by_offset(count, &Direction::Backward, false, false, ctx);
-            }
-            CharacterMotion::WrappingRight => {
-                model.vim_move_horizontal_by_offset(count, &Direction::Forward, false, false, ctx);
-            }
-        });
+        self.model
+            .update(ctx, |model, ctx| match character_motion.navigation() {
+                CharacterNavigation::Horizontal {
+                    direction,
+                    stop_at_line_boundary,
+                } => model.vim_move_horizontal_by_offset(
+                    count,
+                    &direction,
+                    false,
+                    stop_at_line_boundary,
+                    ctx,
+                ),
+                CharacterNavigation::Vertical(direction) => {
+                    let direction = match direction {
+                        Direction::Backward => TextDirection::Backwards,
+                        Direction::Forward => TextDirection::Forwards,
+                    };
+                    model.vim_move_vertical_by_offset(count, direction, false, ctx);
+                }
+            });
     }
 
     fn navigate_word(&mut self, count: u32, word_motion: &WordMotion, ctx: &mut ViewContext<Self>) {
@@ -68,22 +69,22 @@ impl VimHandler for CodeEditorView {
     }
 
     fn navigate_line(&mut self, line_count: u32, motion: &LineMotion, ctx: &mut ViewContext<Self>) {
-        self.model.update(ctx, |model, ctx| {
-            match motion {
-                LineMotion::Start => model.vim_move_to_line_bound(LineBound::Start, false, ctx),
-                LineMotion::FirstNonWhitespace => model.vim_move_to_first_nonwhitespace(false, ctx),
-                LineMotion::End => {
-                    // Only moving to the end of the line ($) uses number-repeat (the line-count var)
+        self.model
+            .update(ctx, |model, ctx| match motion.navigation(line_count) {
+                LineNavigation::Start => model.vim_move_to_line_bound(LineBound::Start, false, ctx),
+                LineNavigation::FirstNonWhitespace => {
+                    model.vim_move_to_first_nonwhitespace(false, ctx)
+                }
+                LineNavigation::End { lines_forward } => {
                     model.vim_move_vertical_by_offset(
-                        line_count.saturating_sub(1),
+                        lines_forward,
                         TextDirection::Forwards,
                         false,
                         ctx,
                     );
                     model.vim_move_to_line_bound(LineBound::End, false, ctx);
                 }
-            }
-        })
+            })
     }
 
     fn first_nonwhitespace_motion(
@@ -93,20 +94,12 @@ impl VimHandler for CodeEditorView {
         ctx: &mut ViewContext<Self>,
     ) {
         self.model.update(ctx, |model, ctx| {
-            match motion {
-                FirstNonWhitespaceMotion::Up => {
-                    model.vim_move_vertical_by_offset(count, TextDirection::Backwards, false, ctx);
-                }
-                FirstNonWhitespaceMotion::Down => {
-                    model.vim_move_vertical_by_offset(count, TextDirection::Forwards, false, ctx)
-                }
-                FirstNonWhitespaceMotion::DownMinusOne => model.vim_move_vertical_by_offset(
-                    count - 1,
-                    TextDirection::Forwards,
-                    false,
-                    ctx,
-                ),
-            }
+            let (direction, count) = motion.navigation(count);
+            let direction = match direction {
+                Direction::Backward => TextDirection::Backwards,
+                Direction::Forward => TextDirection::Forwards,
+            };
+            model.vim_move_vertical_by_offset(count, direction, false, ctx);
 
             model.vim_move_to_first_nonwhitespace(false, ctx);
         })
