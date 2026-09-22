@@ -3000,6 +3000,100 @@ impl EditorModel {
     ) -> Range<ByteOffset> {
         selection.to_byte_offset(self.buffer(ctx))
     }
+
+    pub fn vim_navigate_char(
+        &mut self,
+        count: u32,
+        motion: &CharacterMotion,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        match motion {
+            CharacterMotion::Left => {
+                self.move_cursors_by_offset(count, &Direction::Backward, false, true, ctx);
+            }
+            CharacterMotion::Right => {
+                self.move_cursors_by_offset(count, &Direction::Forward, false, true, ctx);
+            }
+            CharacterMotion::WrappingLeft => {
+                self.move_cursor_ignoring_newlines(count, &Direction::Backward, false, ctx);
+            }
+            CharacterMotion::WrappingRight => {
+                self.move_cursor_ignoring_newlines(count, &Direction::Forward, false, ctx);
+            }
+            CharacterMotion::Up => self.move_up_by_offset(count, ctx),
+            CharacterMotion::Down => self.move_down_by_offset(count, ctx),
+        }
+    }
+
+    pub fn vim_navigate_line(
+        &mut self,
+        line_count: u32,
+        motion: &LineMotion,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        match motion {
+            LineMotion::Start => self.cursor_line_start(false, ctx),
+            LineMotion::FirstNonWhitespace => {
+                self.cursor_line_start_non_whitespace(false, ctx);
+            }
+            LineMotion::End => {
+                self.move_down_by_offset(line_count.saturating_sub(1), ctx);
+                self.cursor_line_end(false, ctx);
+            }
+        }
+    }
+
+    pub fn vim_first_nonwhitespace_motion(
+        &mut self,
+        count: u32,
+        motion: &FirstNonWhitespaceMotion,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        match motion {
+            FirstNonWhitespaceMotion::Up => self.move_up_by_offset(count, ctx),
+            FirstNonWhitespaceMotion::Down => self.move_down_by_offset(count, ctx),
+            FirstNonWhitespaceMotion::DownMinusOne => {
+                self.move_down_by_offset(count - 1, ctx);
+            }
+        }
+        self.cursor_line_start_non_whitespace(false, ctx);
+    }
+
+    pub fn vim_navigate_paragraph(
+        &mut self,
+        count: u32,
+        direction: &Direction,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        self.vim_move_by_paragraph(count, direction, false, ctx);
+    }
+
+    pub fn vim_jump_to_first_line(&mut self, ctx: &mut ModelContext<Self>) {
+        self.reset_selections_to_point(&Point::new(0, 0), ctx);
+    }
+
+    pub fn vim_jump_to_last_line(&mut self, ctx: &mut ModelContext<Self>) {
+        self.move_to_buffer_end(false, ctx);
+        self.cursor_line_start(false, ctx);
+    }
+
+    pub fn vim_jump_to_line(&mut self, line_number: u32, ctx: &mut ModelContext<Self>) {
+        let max_row = self.buffer(ctx).max_point().row;
+        let row = line_number.saturating_sub(1).min(max_row);
+        self.reset_selections_to_point(&Point::new(row, 0), ctx);
+    }
+
+    pub fn vim_jump_to_matching_bracket(&mut self, ctx: &mut ModelContext<Self>) {
+        self.vim_move_cursor_to_matching_bracket(false, ctx);
+    }
+
+    pub fn vim_jump_to_unmatched_bracket(
+        &mut self,
+        bracket: &BracketChar,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        self.vim_move_cursor_to_unmatched_bracket(bracket, false, ctx);
+    }
 }
 
 /// The private interface.
