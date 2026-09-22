@@ -823,6 +823,33 @@ fn test_streamed_agent_update_matches_reset_with_markdown_for_code_block() {
 }
 
 #[test]
+fn test_streamed_agent_update_can_replace_all_content() {
+    App::test((), |mut app| async move {
+        initialize_app_for_ai_document_tests(&mut app);
+        let model_handle = app.add_model(|_| AIDocumentModel::new_for_test());
+        let document_id = model_handle.update(&mut app, |model, ctx| {
+            model.create_document(
+                "Streaming Test",
+                "# Initial content",
+                AIConversationId::new(),
+                None,
+                ctx,
+            )
+        });
+
+        for content in ["", "Replacement content"] {
+            model_handle.update(&mut app, |model, ctx| {
+                model.apply_streamed_agent_update(&document_id, "Streaming Test", content, ctx);
+                assert_eq!(
+                    model.get_document_content(&document_id, ctx).as_deref(),
+                    Some(content)
+                );
+            });
+        }
+    });
+}
+
+#[test]
 fn test_plan_markdown_content_preserves_copyable_structure() {
     App::test((), |mut app| async move {
         initialize_app_for_ai_document_tests(&mut app);
