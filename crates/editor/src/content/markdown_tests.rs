@@ -499,3 +499,51 @@ fn test_image_with_content_html_serialization() {
         assert!(html.contains("Some text"));
     });
 }
+
+#[test]
+fn test_apply_formatted_text_delta_empty_replacement() {
+    App::test((), |mut app| async move {
+        let old_markdown = "hello world\n";
+        let (buffer, selection) = Buffer::mock_from_markdown(
+            old_markdown,
+            None,
+            Box::new(|_, _| IndentBehavior::Ignore),
+            &mut app,
+        );
+
+        buffer.update(&mut app, |buffer, ctx| {
+            let end_offset = buffer.max_charoffset();
+            let edits =
+                Vec1::try_from_vec(vec![("\n".to_string(), end_offset..end_offset)]).unwrap();
+            buffer.update_content(
+                BufferEditAction::InsertAtCharOffsetRanges { edits: &edits },
+                EditOrigin::SystemEdit,
+                selection.clone(),
+                ctx,
+            );
+        });
+
+        let old_formatted = app.read_model(&buffer, |buffer, _| {
+            buffer.range_to_formatted_text(
+                CharOffset::from(1)..buffer.max_charoffset(),
+                StyledBlockBoundaryBehavior::Exclusive,
+            )
+        });
+
+        let new_formatted = parse_markdown("").unwrap();
+        let delta = compute_formatted_text_delta(old_formatted, new_formatted);
+        assert!(!delta.is_noop());
+        assert!(delta.new_suffix.is_empty());
+
+        buffer.update(&mut app, |buffer, ctx| {
+            buffer.apply_formatted_text_delta(&delta, selection.clone(), ctx);
+        });
+
+        app.read_model(&buffer, |buffer, _| {
+            assert!(
+                buffer.max_charoffset() >= CharOffset::from(1),
+                "Buffer must retain at least a plain-text marker after an empty replacement"
+            );
+        });
+    });
+}
