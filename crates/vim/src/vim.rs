@@ -29,6 +29,154 @@ impl VimMode {
         }
     }
 }
+/// An editor-neutral destination produced from a Vim movement.
+#[derive(Clone, Debug)]
+pub enum VimNavigationTarget<'a> {
+    Horizontal {
+        count: u32,
+        direction: Direction,
+        wrapping: bool,
+    },
+    Vertical {
+        count: u32,
+        direction: Direction,
+    },
+    Word {
+        count: u32,
+        motion: &'a WordMotion,
+    },
+    LineStart,
+    LineFirstNonWhitespace {
+        line_offset: u32,
+        direction: Direction,
+    },
+    LineEnd {
+        line_offset: u32,
+    },
+    FindChar {
+        occurrence_count: u32,
+        motion: &'a FindCharMotion,
+    },
+    Paragraph {
+        count: u32,
+        direction: Direction,
+    },
+    FirstLine,
+    LastLine,
+    Line(u32),
+    MatchingBracket,
+    UnmatchedBracket(&'a BracketChar),
+}
+
+fn character_navigation_target(
+    count: u32,
+    motion: &CharacterMotion,
+) -> VimNavigationTarget<'static> {
+    match motion {
+        CharacterMotion::Left => VimNavigationTarget::Horizontal {
+            count,
+            direction: Direction::Backward,
+            wrapping: false,
+        },
+        CharacterMotion::Right => VimNavigationTarget::Horizontal {
+            count,
+            direction: Direction::Forward,
+            wrapping: false,
+        },
+        CharacterMotion::WrappingLeft => VimNavigationTarget::Horizontal {
+            count,
+            direction: Direction::Backward,
+            wrapping: true,
+        },
+        CharacterMotion::WrappingRight => VimNavigationTarget::Horizontal {
+            count,
+            direction: Direction::Forward,
+            wrapping: true,
+        },
+        CharacterMotion::Up => VimNavigationTarget::Vertical {
+            count,
+            direction: Direction::Backward,
+        },
+        CharacterMotion::Down => VimNavigationTarget::Vertical {
+            count,
+            direction: Direction::Forward,
+        },
+    }
+}
+
+fn line_navigation_target(count: u32, motion: &LineMotion) -> VimNavigationTarget<'static> {
+    match motion {
+        LineMotion::Start => VimNavigationTarget::LineStart,
+        LineMotion::FirstNonWhitespace => VimNavigationTarget::LineFirstNonWhitespace {
+            line_offset: 0,
+            direction: Direction::Forward,
+        },
+        LineMotion::End => VimNavigationTarget::LineEnd {
+            line_offset: count.saturating_sub(1),
+        },
+    }
+}
+
+fn first_nonwhitespace_navigation_target(
+    count: u32,
+    motion: &FirstNonWhitespaceMotion,
+) -> VimNavigationTarget<'static> {
+    match motion {
+        FirstNonWhitespaceMotion::Up => VimNavigationTarget::LineFirstNonWhitespace {
+            line_offset: count,
+            direction: Direction::Backward,
+        },
+        FirstNonWhitespaceMotion::Down => VimNavigationTarget::LineFirstNonWhitespace {
+            line_offset: count,
+            direction: Direction::Forward,
+        },
+        FirstNonWhitespaceMotion::DownMinusOne => VimNavigationTarget::LineFirstNonWhitespace {
+            line_offset: count - 1,
+            direction: Direction::Forward,
+        },
+    }
+}
+
+/// Applies shared Vim navigation destinations to an editor.
+pub trait VimNavigation {
+    fn apply_vim_navigation(
+        &mut self,
+        target: VimNavigationTarget<'_>,
+        ctx: &mut ViewContext<Self>,
+    );
+
+    fn finish_vim_navigation(&mut self, _ctx: &mut ViewContext<Self>) {}
+
+    fn apply_character_motion(
+        &mut self,
+        count: u32,
+        motion: &CharacterMotion,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        self.apply_vim_navigation(character_navigation_target(count, motion), ctx);
+        self.finish_vim_navigation(ctx);
+    }
+
+    fn apply_word_motion(&mut self, count: u32, motion: &WordMotion, ctx: &mut ViewContext<Self>) {
+        self.apply_vim_navigation(VimNavigationTarget::Word { count, motion }, ctx);
+        self.finish_vim_navigation(ctx);
+    }
+
+    fn apply_line_motion(&mut self, count: u32, motion: &LineMotion, ctx: &mut ViewContext<Self>) {
+        self.apply_vim_navigation(line_navigation_target(count, motion), ctx);
+        self.finish_vim_navigation(ctx);
+    }
+
+    fn apply_first_nonwhitespace_motion(
+        &mut self,
+        count: u32,
+        motion: &FirstNonWhitespaceMotion,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        self.apply_vim_navigation(first_nonwhitespace_navigation_target(count, motion), ctx);
+        self.finish_vim_navigation(ctx);
+    }
+}
 
 /// A finite-state automaton for interpreting the meaning of Vim key sequences. It takes
 /// individual keystrokes, performs necessary state transitions for each one, and emits a VimEvent
@@ -2097,7 +2245,7 @@ where
 }
 
 /// To be implemented by Views that support Vim keybindings.
-pub trait VimHandler {
+pub trait VimHandler: VimNavigation {
     /// A character to be inserted to the buffer.
     fn insert_char(&mut self, c: char, ctx: &mut ViewContext<Self>);
     /// A one-character motion of the cursor.
@@ -2106,31 +2254,57 @@ pub trait VimHandler {
         count: u32,
         character_motion: &CharacterMotion,
         ctx: &mut ViewContext<Self>,
-    );
+    ) {
+        self.apply_character_motion(count, character_motion, ctx);
+    }
     /// Word-related motion of the cursor.
-    fn navigate_word(&mut self, count: u32, word_motion: &WordMotion, ctx: &mut ViewContext<Self>);
+    fn navigate_word(&mut self, count: u32, word_motion: &WordMotion, ctx: &mut ViewContext<Self>) {
+        self.apply_word_motion(count, word_motion, ctx);
+    }
     /// Motions within the current line: 0, ^, $
-    fn navigate_line(&mut self, count: u32, line_motion: &LineMotion, ctx: &mut ViewContext<Self>);
+    fn navigate_line(&mut self, count: u32, line_motion: &LineMotion, ctx: &mut ViewContext<Self>) {
+        self.apply_line_motion(count, line_motion, ctx);
+    }
     fn first_nonwhitespace_motion(
         &mut self,
         count: u32,
         motion: &FirstNonWhitespaceMotion,
         ctx: &mut ViewContext<Self>,
-    );
+    ) {
+        self.apply_first_nonwhitespace_motion(count, motion, ctx);
+    }
     /// Motions to a particular character on the current line.
     fn find_char(
         &mut self,
         occurrence_count: u32,
         find_char_motion: &FindCharMotion,
         ctx: &mut ViewContext<Self>,
-    );
+    ) {
+        self.apply_vim_navigation(
+            VimNavigationTarget::FindChar {
+                occurrence_count,
+                motion: find_char_motion,
+            },
+            ctx,
+        );
+        self.finish_vim_navigation(ctx);
+    }
     /// Navigate by paragraph: { and }.
     fn navigate_paragraph(
         &mut self,
         count: u32,
         direction: &Direction,
         ctx: &mut ViewContext<Self>,
-    );
+    ) {
+        self.apply_vim_navigation(
+            VimNavigationTarget::Paragraph {
+                count,
+                direction: *direction,
+            },
+            ctx,
+        );
+        self.finish_vim_navigation(ctx);
+    }
     /// For all "operator commands", e.g. d, c, y. See ":help operator" in Vim, or click here:
     /// https://vimdoc.sourceforge.net/htmldoc/motion.html#operator
     fn operation(
@@ -2192,11 +2366,26 @@ pub trait VimHandler {
         ctx: &mut ViewContext<Self>,
     );
     fn visual_text_object(&mut self, text_object: &VimTextObject, ctx: &mut ViewContext<Self>);
-    fn jump_to_first_line(&mut self, ctx: &mut ViewContext<Self>);
-    fn jump_to_last_line(&mut self, ctx: &mut ViewContext<Self>);
-    fn jump_to_line(&mut self, line_number: u32, ctx: &mut ViewContext<Self>);
-    fn jump_to_matching_bracket(&mut self, ctx: &mut ViewContext<Self>);
-    fn jump_to_unmatched_bracket(&mut self, bracket: &BracketChar, ctx: &mut ViewContext<Self>);
+    fn jump_to_first_line(&mut self, ctx: &mut ViewContext<Self>) {
+        self.apply_vim_navigation(VimNavigationTarget::FirstLine, ctx);
+        self.finish_vim_navigation(ctx);
+    }
+    fn jump_to_last_line(&mut self, ctx: &mut ViewContext<Self>) {
+        self.apply_vim_navigation(VimNavigationTarget::LastLine, ctx);
+        self.finish_vim_navigation(ctx);
+    }
+    fn jump_to_line(&mut self, line_number: u32, ctx: &mut ViewContext<Self>) {
+        self.apply_vim_navigation(VimNavigationTarget::Line(line_number), ctx);
+        self.finish_vim_navigation(ctx);
+    }
+    fn jump_to_matching_bracket(&mut self, ctx: &mut ViewContext<Self>) {
+        self.apply_vim_navigation(VimNavigationTarget::MatchingBracket, ctx);
+        self.finish_vim_navigation(ctx);
+    }
+    fn jump_to_unmatched_bracket(&mut self, bracket: &BracketChar, ctx: &mut ViewContext<Self>) {
+        self.apply_vim_navigation(VimNavigationTarget::UnmatchedBracket(bracket), ctx);
+        self.finish_vim_navigation(ctx);
+    }
     fn paste(
         &mut self,
         count: u32,

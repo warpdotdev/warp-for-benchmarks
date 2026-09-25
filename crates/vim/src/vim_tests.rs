@@ -18,6 +18,42 @@ fn enter_visual_mode(motion_type: MotionType) -> VimFSA {
     fsa.mode = VimMode::Visual(motion_type);
     fsa
 }
+#[test]
+fn character_navigation_preserves_wrapping() {
+    let target = character_navigation_target(3, &CharacterMotion::WrappingLeft);
+
+    assert!(matches!(
+        target,
+        VimNavigationTarget::Horizontal {
+            count: 3,
+            direction: Direction::Backward,
+            wrapping: true,
+        }
+    ));
+}
+
+#[test]
+fn counted_line_end_moves_down_before_targeting_line_end() {
+    let target = line_navigation_target(4, &LineMotion::End);
+
+    assert!(matches!(
+        target,
+        VimNavigationTarget::LineEnd { line_offset: 3 }
+    ));
+}
+
+#[test]
+fn down_minus_one_targets_first_nonwhitespace_on_the_counted_line() {
+    let target = first_nonwhitespace_navigation_target(4, &FirstNonWhitespaceMotion::DownMinusOne);
+
+    assert!(matches!(
+        target,
+        VimNavigationTarget::LineFirstNonWhitespace {
+            line_offset: 3,
+            direction: Direction::Forward,
+        }
+    ));
+}
 
 fn assert_navigate_jump_to_line(event: &VimEvent, expected_line: u32) {
     match &event.event_type {
