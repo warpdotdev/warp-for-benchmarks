@@ -261,6 +261,60 @@ fn test_apply_formatted_text_delta_append() {
 }
 
 #[test]
+fn test_apply_formatted_text_delta_replacing_all_content_with_nothing() {
+    App::test((), |mut app| async move {
+        let (buffer, selection) = Buffer::mock_from_markdown(
+            "# Plan\nhello world",
+            None,
+            Box::new(|_, _| IndentBehavior::Ignore),
+            &mut app,
+        );
+
+        let old_formatted = app.read_model(&buffer, |buffer, _| {
+            buffer.range_to_formatted_text(
+                CharOffset::from(1)..buffer.max_charoffset(),
+                StyledBlockBoundaryBehavior::Inclusive,
+            )
+        });
+        let empty_delta = compute_formatted_text_delta(old_formatted, parse_markdown("").unwrap());
+        assert_eq!(empty_delta.common_prefix_lines, 0);
+        assert!(empty_delta.new_suffix.is_empty());
+
+        buffer.update(&mut app, |buffer, ctx| {
+            buffer.apply_formatted_text_delta(&empty_delta, selection.clone(), ctx);
+        });
+
+        app.read_model(&buffer, |buffer, _| {
+            assert_eq!(buffer.debug(), "<text>");
+            assert_eq!(buffer.max_charoffset(), CharOffset::from(1));
+        });
+        app.read_model(&selection, |selection, _| {
+            assert_eq!(
+                selection.selection_to_offset_range(selection.selection()),
+                CharOffset::from(1)..CharOffset::from(1)
+            );
+        });
+
+        // The buffer should accept streamed content again after being emptied.
+        let new_markdown = "# Plan\nupdated";
+        let new_formatted = parse_markdown(new_markdown).unwrap();
+        let refill_delta = app.read_model(&buffer, |buffer, _| {
+            let old_formatted = buffer.range_to_formatted_text(
+                CharOffset::from(1)..buffer.max_charoffset(),
+                StyledBlockBoundaryBehavior::Inclusive,
+            );
+            compute_formatted_text_delta(old_formatted, new_formatted.clone())
+        });
+        buffer.update(&mut app, |buffer, ctx| {
+            buffer.apply_formatted_text_delta(&refill_delta, selection.clone(), ctx);
+        });
+
+        let exported = app.read_model(&buffer, |buffer, _| buffer.markdown_unescaped());
+        assert_eq!(exported.trim_end(), new_markdown);
+    });
+}
+
+#[test]
 fn test_image_html_serialization() {
     App::test((), |mut app| async move {
         let markdown = "![Alt text](image.png)\n";
