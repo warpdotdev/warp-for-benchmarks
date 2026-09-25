@@ -1,3 +1,4 @@
+use vim::navigation;
 use vim::vim::{
     BracketChar, CharacterMotion, Direction, FindCharMotion, FirstNonWhitespaceMotion,
     InsertPosition, LineMotion, ModeTransition, MotionType, TextObjectType, VimHandler, VimMode,
@@ -93,20 +94,12 @@ impl VimHandler for CodeEditorView {
         ctx: &mut ViewContext<Self>,
     ) {
         self.model.update(ctx, |model, ctx| {
-            match motion {
-                FirstNonWhitespaceMotion::Up => {
-                    model.vim_move_vertical_by_offset(count, TextDirection::Backwards, false, ctx);
-                }
-                FirstNonWhitespaceMotion::Down => {
-                    model.vim_move_vertical_by_offset(count, TextDirection::Forwards, false, ctx)
-                }
-                FirstNonWhitespaceMotion::DownMinusOne => model.vim_move_vertical_by_offset(
-                    count - 1,
-                    TextDirection::Forwards,
-                    false,
-                    ctx,
-                ),
-            }
+            let (direction, steps) = navigation::first_nonwhitespace_step(count, *motion);
+            let direction = match direction {
+                Direction::Backward => TextDirection::Backwards,
+                Direction::Forward => TextDirection::Forwards,
+            };
+            model.vim_move_vertical_by_offset(steps, direction, false, ctx);
 
             model.vim_move_to_first_nonwhitespace(false, ctx);
         })
@@ -705,7 +698,7 @@ impl VimHandler for CodeEditorView {
         self.model.update(ctx, |model, ctx| {
             let buffer = model.content().as_ref(ctx);
             let max_row = buffer.max_point().row;
-            let row = line_number.max(1).min(max_row);
+            let row = navigation::jump_to_line(line_number, max_row, 1);
             model.jump_to_line_column(row as usize, None, ctx);
         });
     }

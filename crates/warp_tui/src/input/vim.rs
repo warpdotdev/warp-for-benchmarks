@@ -14,6 +14,7 @@
 //! - Scroll helpers (`center_cursor_vertically`, `scroll_half_page_*`) — no-op.
 //!
 
+use vim::navigation;
 use vim::vim::{
     BracketChar, CharacterMotion, Direction, FindCharMotion, FirstNonWhitespaceMotion,
     InsertPosition, LineMotion, ModeTransition, MotionType, VimHandler, VimMode, VimMotion,
@@ -134,22 +135,12 @@ impl VimHandler for TuiInputView {
         ctx: &mut ViewContext<Self>,
     ) {
         self.model.update(ctx, |model, ctx| {
-            match motion {
-                FirstNonWhitespaceMotion::Up => {
-                    model.vim_move_vertical_by_offset(count, TextDirection::Backwards, false, ctx);
-                }
-                FirstNonWhitespaceMotion::Down => {
-                    model.vim_move_vertical_by_offset(count, TextDirection::Forwards, false, ctx);
-                }
-                FirstNonWhitespaceMotion::DownMinusOne => {
-                    model.vim_move_vertical_by_offset(
-                        count - 1,
-                        TextDirection::Forwards,
-                        false,
-                        ctx,
-                    );
-                }
-            }
+            let (direction, steps) = navigation::first_nonwhitespace_step(count, *motion);
+            let direction = match direction {
+                Direction::Backward => TextDirection::Backwards,
+                Direction::Forward => TextDirection::Forwards,
+            };
+            model.vim_move_vertical_by_offset(steps, direction, false, ctx);
             model.vim_move_to_first_nonwhitespace(false, ctx);
         });
         self.follow_cursor(ctx);
@@ -367,8 +358,8 @@ impl VimHandler for TuiInputView {
     fn jump_to_line(&mut self, line_number: u32, ctx: &mut ViewContext<Self>) {
         self.model.update(ctx, |model, ctx| {
             let last_line = model.content().as_ref(ctx).max_point().row as usize;
-            let line = line_number.max(1) as usize;
-            model.jump_to_line_column(line.min(last_line), Some(0), ctx);
+            let line = navigation::jump_to_line(line_number, last_line as u32, 1) as usize;
+            model.jump_to_line_column(line, Some(0), ctx);
         });
         self.follow_cursor(ctx);
         ctx.notify();

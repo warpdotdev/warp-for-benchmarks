@@ -546,7 +546,8 @@ pub trait CoreEditorModel: Entity {
 
         let new_selections = current_selections.mapped(|selection_offset| {
             let cursor_offset = selection_offset.head;
-            let first_nonwhitespace = content.containing_line_first_nonwhitespace(cursor_offset);
+            let first_nonwhitespace = vim::navigation::first_nonwhitespace(content, cursor_offset)
+                .unwrap_or(cursor_offset);
 
             SelectionOffsets {
                 head: first_nonwhitespace,

@@ -15,7 +15,6 @@ pub use buffer::{
 };
 use buffer::{Buffer, Text};
 pub use display_map::{Bias, DisplayMap, DisplayPoint, MovementResult, ToDisplayPoint};
-use itertools::FoldWhile::{Continue, Done};
 use itertools::Itertools;
 use lazy_static::lazy_static;
 use num_traits::SaturatingSub;
@@ -26,14 +25,15 @@ pub use selections::{
 };
 use string_offset::{ByteOffset, CharOffset};
 use vec1::{Vec1, vec1};
+use vim::navigation::{self, HorizontalBoundary};
 use vim::vim::{
     BracketChar, CharacterMotion, Direction, FindCharMotion, FirstNonWhitespaceMotion, LineMotion,
     MotionType, TextObjectInclusion, TextObjectType, VimOperator, WordBound, WordMotion,
 };
 use vim::{
-    find_next_paragraph_end, find_previous_paragraph_start, vim_a_block, vim_a_paragraph,
-    vim_a_quote, vim_a_word, vim_find_char_on_line, vim_find_matching_bracket, vim_inner_block,
-    vim_inner_paragraph, vim_inner_quote, vim_inner_word, vim_word_iterator_from_offset,
+    vim_a_block, vim_a_paragraph, vim_a_quote, vim_a_word, vim_find_char_on_line,
+    vim_find_matching_bracket, vim_inner_block, vim_inner_paragraph, vim_inner_quote,
+    vim_inner_word, vim_word_iterator_from_offset,
 };
 use warp_errors::report_error;
 use warpui::accessibility::{AccessibilityContent, WarpA11yRole};
@@ -1483,11 +1483,8 @@ impl EditorModel {
         self.move_cursor(
             keep_selection,
             |buffer, selection| {
-                let start = selection.head().to_point(buffer).unwrap();
-                let line = buffer.line(start.row).unwrap();
-                let non_whitespace =
-                    line.chars().position(|c| !c.is_whitespace()).unwrap_or(0) as u32;
-                Point::new(start.row, non_whitespace)
+                let origin = selection.head().to_char_offset(buffer).unwrap();
+                navigation::first_nonwhitespace(buffer, origin).unwrap_or(origin)
             },
             ctx,
         );
@@ -1623,31 +1620,7 @@ impl EditorModel {
                     .to_char_offset(buffer)
                     .expect("selection must be a valid CharOffset");
 
-                // Create an iterator to determine the starting point for the search. Vim will only
-                // consider starting points on the current line.
-                let mut iter = buffer
-                    .chars_at(offset)
-                    .expect("infallible with a valid CharOffset")
-                    .take_while(|c| *c != '\n');
-
-                // Start by checking the char under the current cursor position.
-                let Some(c) = iter.next() else {
-                    return offset;
-                };
-                let (bracket, start_offset) = match BracketChar::try_from(c) {
-                    // If the current char is a bracket, match that.
-                    Ok(bracket) => (bracket, offset),
-                    // If not, move forward on this line until we find a bracket, and begin the
-                    // search there.
-                    Err(_) => match iter
-                        .enumerate()
-                        .find_map(|(i, c)| Some((i, BracketChar::try_from(c).ok()?)))
-                    {
-                        None => return offset,
-                        Some((i, bracket)) => (bracket, offset + i + 1),
-                    },
-                };
-                vim_find_matching_bracket(buffer, &bracket, start_offset).unwrap_or(offset)
+                navigation::matching_bracket(buffer, offset).unwrap_or(offset)
             },
             ctx,
         );
@@ -1749,39 +1722,20 @@ impl EditorModel {
                     .to_char_offset(buffer)
                     .expect("Selection head must be valid CharOffset");
 
-                let offset_change = if stop_at_line_boundary {
-                    let head_point = head
-                        .to_point(buffer)
-                        .expect("Selection head must be valid Point");
-                    match direction {
-                        // When moving left, there are <current column> characters
-                        // between the current position and the start of the line.
-                        // Respect the line boundary by moving at most that number
-                        // of characters.
-                        Direction::Backward => u32::min(head_point.column, char_count),
-                        Direction::Forward => {
-                            let line_len = buffer
-                                .line_len(head_point.row)
-                                .expect("Selection head row should have a length");
-                            // When moving right, there are (line_len - <current column>)
-                            // characters between the current position and the end of the
-                            // line. Respect the line boundary by moving at most that
-                            // number of characters.
-                            u32::min(line_len.saturating_sub(head_point.column), char_count)
-                        }
-                    }
+                if stop_at_line_boundary {
+                    navigation::horizontal(
+                        buffer,
+                        head,
+                        buffer.len(),
+                        char_count,
+                        *direction,
+                        HorizontalBoundary::Line,
+                        |row| buffer.line_len(row).unwrap_or_default(),
+                    )
                 } else {
-                    char_count
-                };
-
-                match direction {
-                    Direction::Backward => head.saturating_sub(&(offset_change as usize).into()),
-                    Direction::Forward => {
-                        let max_offset = buffer
-                            .max_point()
-                            .to_char_offset(buffer)
-                            .expect("Buffer::max_point must be valid CharOffset");
-                        cmp::min(max_offset, head + offset_change as usize)
+                    match direction {
+                        Direction::Backward => head.saturating_sub(&(char_count as usize).into()),
+                        Direction::Forward => cmp::min(buffer.len(), head + char_count as usize),
                     }
                 }
             },
@@ -1809,50 +1763,15 @@ impl EditorModel {
                     .to_char_offset(buffer)
                     .expect("Selection head must be valid CharOffset");
 
-                match direction {
-                    Direction::Backward => {
-                        let offset_change = buffer
-                            .chars_rev_at(head)
-                            .expect("Buffer must have characters at the current head.")
-                            .enumerate()
-                            .fold_while(0, |chars_so_far, (rev_index, c)| {
-                                if chars_so_far < char_count {
-                                    if c == '\n' {
-                                        Continue(chars_so_far)
-                                    } else {
-                                        Continue(chars_so_far + 1)
-                                    }
-                                } else {
-                                    Done(rev_index as u32)
-                                }
-                            })
-                            .into_inner();
-                        head.saturating_sub(&(offset_change as usize).into())
-                    }
-                    Direction::Forward => {
-                        let offset_change = buffer
-                            .chars_at(head)
-                            .expect("Buffer must have characters at the current selection head.")
-                            .enumerate()
-                            .fold_while(0, |chars_so_far, (index, c)| {
-                                if chars_so_far < char_count {
-                                    if c == '\n' {
-                                        Continue(chars_so_far)
-                                    } else {
-                                        Continue(chars_so_far + 1)
-                                    }
-                                } else {
-                                    Done(index as u32)
-                                }
-                            })
-                            .into_inner();
-                        let max_offset = buffer
-                            .max_point()
-                            .to_char_offset(buffer)
-                            .expect("Buffer::max_point must be valid CharOffset");
-                        cmp::min(max_offset, head + offset_change as usize)
-                    }
-                }
+                navigation::horizontal(
+                    buffer,
+                    head,
+                    buffer.len(),
+                    char_count,
+                    *direction,
+                    HorizontalBoundary::SkipNewlines,
+                    |_| 0,
+                )
             },
             ctx,
         );
@@ -1880,14 +1799,17 @@ impl EditorModel {
                 .head()
                 .to_point(buffer)
                 .expect("Selection head must be a valid Point");
-            point.row = point.row.saturating_sub(count);
             let goal_column = match selection.goal_end_column {
                 Some(goal_column) => cmp::max(goal_column, point.column),
                 None => point.column,
             };
-            point.column = u32::min(
+            point = navigation::vertical(
+                point,
+                buffer.max_point().row,
+                count,
+                Direction::Backward,
                 goal_column,
-                buffer.line_len(point.row).unwrap_or(point.column),
+                |row| buffer.line_len(row).unwrap_or(point.column),
             );
             let Ok(cursor) = buffer.anchor_at(point, AnchorBias::Left) else {
                 continue;
@@ -1922,14 +1844,17 @@ impl EditorModel {
                 .head()
                 .to_point(buffer)
                 .expect("Selection head must be a valid Point");
-            point.row = cmp::min(point.row + count, max_point.row);
             let goal_column = match selection.goal_end_column {
                 Some(goal_column) => cmp::max(goal_column, point.column),
                 None => point.column,
             };
-            point.column = cmp::min(
+            point = navigation::vertical(
+                point,
+                max_point.row,
+                count,
+                Direction::Forward,
                 goal_column,
-                buffer.line_len(point.row).unwrap_or(point.column),
+                |row| buffer.line_len(row).unwrap_or(point.column),
             );
             let Ok(cursor) = buffer.anchor_at(point, AnchorBias::Left) else {
                 continue;
@@ -2638,19 +2563,14 @@ impl EditorModel {
                 let Ok(mut offset) = selection.head().to_char_offset(buffer) else {
                     return selection.head().clone();
                 };
-                match direction {
-                    Direction::Forward => {
-                        for _ in 0..count {
-                            offset = find_next_paragraph_end(buffer, offset).unwrap_or(max_offset);
-                        }
-                    }
-                    Direction::Backward => {
-                        for _ in 0..count {
-                            offset =
-                                find_previous_paragraph_start(buffer, offset).unwrap_or_default();
-                        }
-                    }
-                }
+                offset = navigation::paragraph(
+                    buffer,
+                    offset,
+                    max_offset,
+                    CharOffset::zero(),
+                    count,
+                    *direction,
+                );
                 buffer
                     .anchor_before(offset)
                     .unwrap_or_else(|_| selection.head().clone())
