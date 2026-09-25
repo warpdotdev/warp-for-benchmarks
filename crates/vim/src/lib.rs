@@ -1,5 +1,10 @@
 mod matching_brackets;
 pub use matching_brackets::vim_find_matching_bracket;
+mod navigation;
+pub use navigation::{
+    LineColumn, LineNumbering, VimNavigationConfig, VimNavigationState, WrappingMotionBehavior,
+    vim_motion_destination,
+};
 
 mod paragraph_iterator;
 pub use paragraph_iterator::{find_next_paragraph_end, find_previous_paragraph_start};

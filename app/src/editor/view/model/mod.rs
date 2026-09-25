@@ -15,7 +15,6 @@ pub use buffer::{
 };
 use buffer::{Buffer, Text};
 pub use display_map::{Bias, DisplayMap, DisplayPoint, MovementResult, ToDisplayPoint};
-use itertools::FoldWhile::{Continue, Done};
 use itertools::Itertools;
 use lazy_static::lazy_static;
 use num_traits::SaturatingSub;
@@ -28,12 +27,13 @@ use string_offset::{ByteOffset, CharOffset};
 use vec1::{Vec1, vec1};
 use vim::vim::{
     BracketChar, CharacterMotion, Direction, FindCharMotion, FirstNonWhitespaceMotion, LineMotion,
-    MotionType, TextObjectInclusion, TextObjectType, VimOperator, WordBound, WordMotion,
+    MotionType, TextObjectInclusion, TextObjectType, VimMotion, VimOperator, WordBound, WordMotion,
 };
 use vim::{
-    find_next_paragraph_end, find_previous_paragraph_start, vim_a_block, vim_a_paragraph,
-    vim_a_quote, vim_a_word, vim_find_char_on_line, vim_find_matching_bracket, vim_inner_block,
-    vim_inner_paragraph, vim_inner_quote, vim_inner_word, vim_word_iterator_from_offset,
+    VimNavigationConfig, VimNavigationState, find_next_paragraph_end,
+    find_previous_paragraph_start, vim_a_block, vim_a_paragraph, vim_a_quote, vim_a_word,
+    vim_find_char_on_line, vim_find_matching_bracket, vim_inner_block, vim_inner_paragraph,
+    vim_inner_quote, vim_inner_word, vim_motion_destination, vim_word_iterator_from_offset,
 };
 use warp_errors::report_error;
 use warpui::accessibility::{AccessibilityContent, WarpA11yRole};
@@ -1260,6 +1260,61 @@ impl EditorModel {
         self.change_selections(new_selections, ctx);
     }
 
+    pub fn vim_navigate(
+        &mut self,
+        count: u32,
+        motion: &VimMotion,
+        config: VimNavigationConfig,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        let buffer = self.buffer(ctx);
+        let mut selections = self.selections(ctx).clone();
+        if matches!(
+            motion,
+            VimMotion::JumpToFirstLine | VimMotion::JumpToLine(_)
+        ) {
+            selections = vec1![selections.first().clone()];
+        }
+        for selection in selections.iter_mut() {
+            let Ok(offset) = selection.head().to_char_offset(buffer) else {
+                continue;
+            };
+            let destination = vim_motion_destination(
+                buffer,
+                VimNavigationState {
+                    offset,
+                    goal_column: selection.goal_end_column,
+                },
+                count,
+                motion,
+                config,
+            );
+            let cursor = match motion {
+                VimMotion::Word(WordMotion {
+                    direction: Direction::Forward,
+                    ..
+                }) => buffer.anchor_at(destination.offset, AnchorBias::Right),
+                VimMotion::Word(WordMotion {
+                    direction: Direction::Backward,
+                    ..
+                }) => buffer.anchor_at(destination.offset, AnchorBias::Left),
+                _ => buffer.anchor_before(destination.offset),
+            };
+            let Ok(cursor) = cursor else {
+                continue;
+            };
+            selection.set_selection(Selection::single_cursor(cursor));
+            if !matches!(
+                motion,
+                VimMotion::JumpToFirstLine | VimMotion::JumpToLine(_)
+            ) {
+                selection.goal_start_column = destination.goal_column;
+                selection.goal_end_column = destination.goal_column;
+            }
+        }
+        self.change_selections(selections, ctx);
+    }
+
     pub fn marked_text_state(&self, ctx: &AppContext) -> MarkedTextState {
         self.buffer(ctx).marked_text_state()
     }
@@ -1787,158 +1842,6 @@ impl EditorModel {
             },
             ctx,
         );
-    }
-
-    /// Implements moving left/right using buffer offsets, skipping past newlines.
-    /// See `move_cursors_by_offset` for an explanation of why we use buffer offsets
-    /// instead of the DisplayMap.
-    ///
-    /// This behavior is used by space/backspace navigation in Vim mode.
-    pub fn move_cursor_ignoring_newlines(
-        &mut self,
-        char_count: u32,
-        direction: &Direction,
-        keep_selection: bool,
-        ctx: &mut ModelContext<Self>,
-    ) {
-        self.move_cursor(
-            keep_selection,
-            |buffer, selection| {
-                let head = selection
-                    .head()
-                    .to_char_offset(buffer)
-                    .expect("Selection head must be valid CharOffset");
-
-                match direction {
-                    Direction::Backward => {
-                        let offset_change = buffer
-                            .chars_rev_at(head)
-                            .expect("Buffer must have characters at the current head.")
-                            .enumerate()
-                            .fold_while(0, |chars_so_far, (rev_index, c)| {
-                                if chars_so_far < char_count {
-                                    if c == '\n' {
-                                        Continue(chars_so_far)
-                                    } else {
-                                        Continue(chars_so_far + 1)
-                                    }
-                                } else {
-                                    Done(rev_index as u32)
-                                }
-                            })
-                            .into_inner();
-                        head.saturating_sub(&(offset_change as usize).into())
-                    }
-                    Direction::Forward => {
-                        let offset_change = buffer
-                            .chars_at(head)
-                            .expect("Buffer must have characters at the current selection head.")
-                            .enumerate()
-                            .fold_while(0, |chars_so_far, (index, c)| {
-                                if chars_so_far < char_count {
-                                    if c == '\n' {
-                                        Continue(chars_so_far)
-                                    } else {
-                                        Continue(chars_so_far + 1)
-                                    }
-                                } else {
-                                    Done(index as u32)
-                                }
-                            })
-                            .into_inner();
-                        let max_offset = buffer
-                            .max_point()
-                            .to_char_offset(buffer)
-                            .expect("Buffer::max_point must be valid CharOffset");
-                        cmp::min(max_offset, head + offset_change as usize)
-                    }
-                }
-            },
-            ctx,
-        );
-    }
-
-    /// Implements moving up using buffer offsets instead of the DisplayMap.
-    ///
-    /// This is necessary for two reasons:
-    ///
-    /// 1. The `DisplayMap` doesn't get updated until the current event handler
-    /// has finished running.
-    /// This means we can't call any function that relies on the `DisplayMap`
-    /// in an event handler if the buffer has been edited because it will be
-    /// out of date.
-    ///
-    /// 2. Functions that move the cursor, such as move_up and move_left, rely
-    /// on the `DisplayMap` to translate buffer offsets into `DisplayPoints`.
-    /// This means those movement functions don't work in unit tests,
-    /// unless the window is forcibly painted first.
-    pub fn move_up_by_offset(&mut self, count: u32, ctx: &mut ModelContext<Self>) {
-        let buffer = self.buffer(ctx);
-        let mut new_selections = self.selections(ctx).clone();
-        for selection in new_selections.iter_mut() {
-            let mut point = selection
-                .head()
-                .to_point(buffer)
-                .expect("Selection head must be a valid Point");
-            point.row = point.row.saturating_sub(count);
-            let goal_column = match selection.goal_end_column {
-                Some(goal_column) => cmp::max(goal_column, point.column),
-                None => point.column,
-            };
-            point.column = u32::min(
-                goal_column,
-                buffer.line_len(point.row).unwrap_or(point.column),
-            );
-            let Ok(cursor) = buffer.anchor_at(point, AnchorBias::Left) else {
-                continue;
-            };
-            selection.set_selection(Selection::single_cursor(cursor));
-            selection.goal_start_column = Some(goal_column);
-            selection.goal_end_column = Some(goal_column);
-        }
-        self.change_selections(new_selections, ctx);
-    }
-
-    /// Implements moving down using buffer offsets instead of the DisplayMap.
-    ///
-    /// This is necessary for two reasons:
-    ///
-    /// 1. The `DisplayMap` doesn't get updated until the current event handler
-    /// has finished running.
-    /// This means we can't call any function that relies on the `DisplayMap`
-    /// in an event handler if the buffer has been edited because it will be
-    /// out of date.
-    ///
-    /// 2. Functions that move the cursor, such as move_up and move_left, rely
-    /// on the `DisplayMap` to translate buffer offsets into `DisplayPoints`.
-    /// This means those movement functions don't work in unit tests,
-    /// unless the window is forcibly painted first.
-    pub fn move_down_by_offset(&mut self, count: u32, ctx: &mut ModelContext<Self>) {
-        let buffer = self.buffer(ctx);
-        let max_point = buffer.max_point();
-        let mut new_selections = self.selections(ctx).clone();
-        for selection in new_selections.iter_mut() {
-            let mut point = selection
-                .head()
-                .to_point(buffer)
-                .expect("Selection head must be a valid Point");
-            point.row = cmp::min(point.row + count, max_point.row);
-            let goal_column = match selection.goal_end_column {
-                Some(goal_column) => cmp::max(goal_column, point.column),
-                None => point.column,
-            };
-            point.column = cmp::min(
-                goal_column,
-                buffer.line_len(point.row).unwrap_or(point.column),
-            );
-            let Ok(cursor) = buffer.anchor_at(point, AnchorBias::Left) else {
-                continue;
-            };
-            selection.set_selection(Selection::single_cursor(cursor));
-            selection.goal_start_column = Some(goal_column);
-            selection.goal_end_column = Some(goal_column);
-        }
-        self.change_selections(new_selections, ctx);
     }
 
     /// See if the character `c` exists on the line of the cursor(s) in the specified direction. If
