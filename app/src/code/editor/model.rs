@@ -4356,6 +4356,75 @@ impl PlainTextEditorModel for CodeEditorModel {
     }
 }
 
+impl vim::navigation::VimNavigation for CodeEditorModel {
+    fn move_horizontal(
+        &mut self,
+        count: u32,
+        direction: Direction,
+        stop_at_line_boundary: bool,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        self.vim_move_horizontal_by_offset(count, &direction, false, stop_at_line_boundary, ctx);
+    }
+
+    fn move_vertical(&mut self, count: u32, direction: Direction, ctx: &mut ModelContext<Self>) {
+        self.vim_move_vertical_by_offset(
+            count,
+            match direction {
+                Direction::Forward => TextDirection::Forwards,
+                Direction::Backward => TextDirection::Backwards,
+            },
+            false,
+            ctx,
+        );
+    }
+
+    fn move_to_line_start(&mut self, ctx: &mut ModelContext<Self>) {
+        self.vim_move_to_line_bound(LineBound::Start, false, ctx);
+    }
+
+    fn move_to_first_nonwhitespace(&mut self, ctx: &mut ModelContext<Self>) {
+        self.vim_move_to_first_nonwhitespace(false, ctx);
+    }
+
+    fn move_to_line_end(&mut self, ctx: &mut ModelContext<Self>) {
+        self.vim_move_to_line_bound(LineBound::End, false, ctx);
+    }
+
+    fn move_word(&mut self, count: u32, motion: &WordMotion, ctx: &mut ModelContext<Self>) {
+        self.vim_navigate_word(motion.direction, motion.bound, motion.word_type, count, ctx);
+    }
+
+    fn move_to_char(&mut self, count: u32, motion: &FindCharMotion, ctx: &mut ModelContext<Self>) {
+        self.vim_find_char(false, count, motion, ctx);
+    }
+
+    fn move_paragraph(&mut self, count: u32, direction: Direction, ctx: &mut ModelContext<Self>) {
+        self.vim_move_by_paragraph(count, &direction, false, ctx);
+    }
+
+    fn move_to_first_line(&mut self, ctx: &mut ModelContext<Self>) {
+        self.jump_to_line_column(0, None, ctx);
+    }
+
+    fn move_to_last_line(&mut self, ctx: &mut ModelContext<Self>) {
+        self.vim_move_to_last_line(ctx);
+    }
+
+    fn move_to_line(&mut self, line_number: u32, ctx: &mut ModelContext<Self>) {
+        let max_row = self.content().as_ref(ctx).max_point().row;
+        self.jump_to_line_column(line_number.max(1).min(max_row) as usize, None, ctx);
+    }
+
+    fn move_to_matching_bracket(&mut self, ctx: &mut ModelContext<Self>) {
+        self.vim_jump_to_matching_bracket(false, ctx);
+    }
+
+    fn move_to_unmatched_bracket(&mut self, bracket: &BracketChar, ctx: &mut ModelContext<Self>) {
+        self.vim_jump_to_unmatched_bracket(bracket, false, ctx);
+    }
+}
+
 impl Entity for CodeEditorModel {
     type Event = CodeEditorModelEvent;
 }
