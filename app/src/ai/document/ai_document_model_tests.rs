@@ -768,6 +768,32 @@ fn test_restored_from_tracking() {
 }
 
 #[test]
+fn streamed_agent_update_can_replace_all_content_then_continue() {
+    App::test((), |mut app| async move {
+        initialize_app_for_ai_document_tests(&mut app);
+        let model_handle = app.add_model(|_| AIDocumentModel::new_for_test());
+        let conversation_id = AIConversationId::new();
+        let document_id = model_handle.update(&mut app, |model, ctx| {
+            model.create_document("Plan", "# Initial plan", conversation_id, None, ctx)
+        });
+
+        model_handle.update(&mut app, |model, ctx| {
+            model.apply_streamed_agent_update(&document_id, "Plan", "", ctx);
+            assert_eq!(
+                model.get_document_content(&document_id, ctx).as_deref(),
+                Some("")
+            );
+
+            model.apply_streamed_agent_update(&document_id, "Plan", "# Updated plan", ctx);
+            assert_eq!(
+                model.get_document_content(&document_id, ctx).as_deref(),
+                Some("# Updated plan\n")
+            );
+        });
+    });
+}
+
+#[test]
 fn test_streamed_agent_update_matches_reset_with_markdown_for_code_block() {
     let full_content = "# Sample Markdown Document\nThis document demonstrates markdown formatting with code examples and explanatory text.\n## Python Code Example\nHere's a Python function that calculates the factorial of a number:\n```python path=null start=null\ndef factorial(n):\n    \"\"\"Calculate the factorial of a positive integer.\"\"\"\n    if n < 0:\n        raise ValueError(\"Factorial is not defined for negative numbers\")\n    elif n == 0 or n == 1:\n        return 1\n    else:\n        result = 1\n        for i in range(2, n + 1):\n            result *= i\n        return result\n# Example usage\nprint(f\"5! = {factorial(5)}\")  # Output: 5! = 120\nprint(f\"0! = {factorial(0)}\")  # Output: 0! = 1\n```\n## About This Implementation\nThe factorial function above uses an iterative approach to calculate the factorial of a given number. It includes error handling for negative inputs and handles the special cases where n equals 0 or 1 (both return 1 by mathematical definition).\nThis example demonstrates several Python concepts including function definition, docstrings, conditional statements, exception handling, and loop iteration. The factorial calculation is a classic programming problem that showcases how to build up a result through repeated multiplication.";
 
