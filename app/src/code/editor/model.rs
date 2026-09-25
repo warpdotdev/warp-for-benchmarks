@@ -23,9 +23,10 @@ use vim::vim::{
     VimTextObject, WordBound, WordMotion, WordType,
 };
 use vim::{
-    find_next_paragraph_end, find_previous_paragraph_start, vim_a_block, vim_a_paragraph,
-    vim_a_quote, vim_a_word, vim_find_char_on_line, vim_find_matching_bracket, vim_inner_block,
-    vim_inner_paragraph, vim_inner_quote, vim_inner_word, vim_word_iterator_from_offset,
+    VimNavigation, find_next_paragraph_end, find_previous_paragraph_start, vim_a_block,
+    vim_a_paragraph, vim_a_quote, vim_a_word, vim_find_char_on_line, vim_find_matching_bracket,
+    vim_inner_block, vim_inner_paragraph, vim_inner_quote, vim_inner_word,
+    vim_word_iterator_from_offset,
 };
 use warp_core::platform::SessionPlatform;
 use warp_core::semantic_selection::SemanticSelection;
@@ -4353,6 +4354,93 @@ impl PlainTextEditorModel for CodeEditorModel {
                 ctx,
             );
         }
+    }
+}
+
+impl VimNavigation for CodeEditorModel {
+    fn vim_nav_horizontal(
+        &mut self,
+        count: u32,
+        direction: Direction,
+        stop_at_line_boundary: bool,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        self.vim_move_horizontal_by_offset(
+            count,
+            &direction,
+            /* keep_selection */ false,
+            stop_at_line_boundary,
+            ctx,
+        );
+    }
+
+    fn vim_nav_vertical(&mut self, count: u32, direction: Direction, ctx: &mut ModelContext<Self>) {
+        let direction = match direction {
+            Direction::Backward => TextDirection::Backwards,
+            Direction::Forward => TextDirection::Forwards,
+        };
+        self.vim_move_vertical_by_offset(count, direction, /* keep_selection */ false, ctx);
+    }
+
+    fn vim_nav_line_start(&mut self, ctx: &mut ModelContext<Self>) {
+        self.vim_move_to_line_bound(LineBound::Start, /* keep_selection */ false, ctx);
+    }
+
+    fn vim_nav_line_end(&mut self, ctx: &mut ModelContext<Self>) {
+        self.vim_move_to_line_bound(LineBound::End, /* keep_selection */ false, ctx);
+    }
+
+    fn vim_nav_first_nonwhitespace(&mut self, ctx: &mut ModelContext<Self>) {
+        self.vim_move_to_first_nonwhitespace(/* keep_selection */ false, ctx);
+    }
+
+    fn vim_nav_word(&mut self, count: u32, motion: &WordMotion, ctx: &mut ModelContext<Self>) {
+        self.vim_navigate_word(motion.direction, motion.bound, motion.word_type, count, ctx);
+    }
+
+    fn vim_nav_find_char(
+        &mut self,
+        occurrence_count: u32,
+        motion: &FindCharMotion,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        self.vim_find_char(
+            /* keep_selection */ false,
+            occurrence_count,
+            motion,
+            ctx,
+        );
+    }
+
+    fn vim_nav_paragraph(
+        &mut self,
+        count: u32,
+        direction: Direction,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        self.vim_move_by_paragraph(count, &direction, /* keep_selection */ false, ctx);
+    }
+
+    fn vim_nav_first_line(&mut self, ctx: &mut ModelContext<Self>) {
+        self.jump_to_line_column(0, None, ctx);
+    }
+
+    fn vim_nav_last_line(&mut self, ctx: &mut ModelContext<Self>) {
+        self.vim_move_to_last_line(ctx);
+    }
+
+    fn vim_nav_line_number(&mut self, line_number: u32, ctx: &mut ModelContext<Self>) {
+        let max_row = self.content().as_ref(ctx).max_point().row;
+        let row = line_number.max(1).min(max_row);
+        self.jump_to_line_column(row as usize, None, ctx);
+    }
+
+    fn vim_nav_matching_bracket(&mut self, ctx: &mut ModelContext<Self>) {
+        self.vim_jump_to_matching_bracket(/* keep_selection */ false, ctx);
+    }
+
+    fn vim_nav_unmatched_bracket(&mut self, bracket: &BracketChar, ctx: &mut ModelContext<Self>) {
+        self.vim_jump_to_unmatched_bracket(bracket, /* keep_selection */ false, ctx);
     }
 }
 

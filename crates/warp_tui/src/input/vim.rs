@@ -3,21 +3,21 @@
 //! Wires the TUI prompt's backing [`CodeEditorModel`] into the shared vim
 //! dispatch layer (the same pattern [`CodeEditorView`] uses).  Prompt-specific
 //! semantics are expressed as explicit no-ops or custom overrides in the trait
-//! implementation rather than as arms in a bespoke match:
+//! implementation:
 //!
-//! - `find_char` — no-op (single-line prompt; `f`/`F`/`t`/`T` are skipped).
-//! - `navigate_paragraph` — no-op (no paragraph structure in a prompt).
-//! - `jump_to_*_bracket` — no-op.
+//! - `navigate` — find-char (`f`/`F`/`t`/`T`), paragraph, and bracket motions are
+//!   no-ops (single-line prompt); `gg`/`G` land on column 0; space and backspace
+//!   don't wrap across lines. Other motions use the shared [`apply_vim_motion`].
 //! - `search`, `cycle_search`, `search_word_at_cursor` — no-op.
 //! - `visual_paste` — inserts from the local yank buffer (no register system).
 //! - `join_line`, `toggle_case`, `keyword_prg`, `ex_command` — no-op.
 //! - Scroll helpers (`center_cursor_vertically`, `scroll_half_page_*`) — no-op.
 //!
 
+use vim::apply_vim_motion;
 use vim::vim::{
-    BracketChar, CharacterMotion, Direction, FindCharMotion, FirstNonWhitespaceMotion,
-    InsertPosition, LineMotion, ModeTransition, MotionType, VimHandler, VimMode, VimMotion,
-    VimOperand, VimOperator, VimTextObject, WordMotion,
+    CharacterMotion, Direction, InsertPosition, ModeTransition, MotionType, VimHandler, VimMode,
+    VimMotion, VimOperand, VimOperator, VimTextObject,
 };
 use warp::editor::{CodeEditorModel, LineBound};
 use warp_editor::content::buffer::AutoScrollBehavior;
@@ -52,26 +52,54 @@ impl VimHandler for TuiInputView {
 
     // ── Navigation ────────────────────────────────────────────────────────────
 
-    fn navigate_char(
-        &mut self,
-        count: u32,
-        character_motion: &CharacterMotion,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        self.model.update(ctx, |model, ctx| match character_motion {
-            CharacterMotion::Right | CharacterMotion::WrappingRight => {
-                model.vim_move_horizontal_by_offset(count, &Direction::Forward, false, true, ctx);
+    fn navigate(&mut self, count: u32, motion: &VimMotion, ctx: &mut ViewContext<Self>) {
+        match motion {
+            // Single-line prompt: find-char, paragraph, and bracket motions are no-ops.
+            VimMotion::FindChar(_)
+            | VimMotion::Paragraph(_)
+            | VimMotion::JumpToMatchingBracket
+            | VimMotion::JumpToUnmatchedBracket(_) => {
+                ctx.notify();
+                return;
             }
-            CharacterMotion::Left | CharacterMotion::WrappingLeft => {
-                model.vim_move_horizontal_by_offset(count, &Direction::Backward, false, true, ctx);
+            // `gg` and `{count}G` land on column 0 rather than the line's indentation.
+            VimMotion::JumpToFirstLine => {
+                self.model
+                    .update(ctx, |model, ctx| model.jump_to_line_column(0, Some(0), ctx));
             }
-            CharacterMotion::Up => {
-                model.vim_move_vertical_by_offset(count, TextDirection::Backwards, false, ctx);
+            VimMotion::JumpToLine(line_number) => {
+                self.model.update(ctx, |model, ctx| {
+                    let last_line = model.content().as_ref(ctx).max_point().row as usize;
+                    let line = (*line_number).max(1) as usize;
+                    model.jump_to_line_column(line.min(last_line), Some(0), ctx);
+                });
             }
-            CharacterMotion::Down => {
-                model.vim_move_vertical_by_offset(count, TextDirection::Forwards, false, ctx);
+            // Space and backspace stop at line boundaries like `l` and `h`.
+            VimMotion::Character(CharacterMotion::WrappingLeft) => {
+                self.navigate_with_shared_motion(
+                    count,
+                    &VimMotion::Character(CharacterMotion::Left),
+                    ctx,
+                );
             }
-        });
+            VimMotion::Character(CharacterMotion::WrappingRight) => {
+                self.navigate_with_shared_motion(
+                    count,
+                    &VimMotion::Character(CharacterMotion::Right),
+                    ctx,
+                );
+            }
+            VimMotion::Character(
+                CharacterMotion::Left
+                | CharacterMotion::Right
+                | CharacterMotion::Up
+                | CharacterMotion::Down,
+            )
+            | VimMotion::Word(_)
+            | VimMotion::Line(_)
+            | VimMotion::FirstNonWhitespace(_)
+            | VimMotion::JumpToLastLine => self.navigate_with_shared_motion(count, motion, ctx),
+        }
         self.follow_cursor(ctx);
         ctx.notify();
     }
@@ -93,88 +121,6 @@ impl VimHandler for TuiInputView {
             }
         });
         self.follow_cursor(ctx);
-        ctx.notify();
-    }
-
-    fn navigate_word(&mut self, count: u32, word_motion: &WordMotion, ctx: &mut ViewContext<Self>) {
-        let WordMotion {
-            direction,
-            bound,
-            word_type,
-        } = word_motion;
-        self.model.update(ctx, |model, ctx| {
-            model.vim_navigate_word(*direction, *bound, *word_type, count, ctx);
-        });
-        self.follow_cursor(ctx);
-        ctx.notify();
-    }
-
-    fn navigate_line(&mut self, line_count: u32, motion: &LineMotion, ctx: &mut ViewContext<Self>) {
-        self.model.update(ctx, |model, ctx| match motion {
-            LineMotion::Start => model.vim_move_to_line_bound(LineBound::Start, false, ctx),
-            LineMotion::FirstNonWhitespace => model.vim_move_to_first_nonwhitespace(false, ctx),
-            LineMotion::End => {
-                model.vim_move_vertical_by_offset(
-                    line_count.saturating_sub(1),
-                    TextDirection::Forwards,
-                    false,
-                    ctx,
-                );
-                model.vim_move_to_line_bound(LineBound::End, false, ctx);
-            }
-        });
-        self.follow_cursor(ctx);
-        ctx.notify();
-    }
-
-    fn first_nonwhitespace_motion(
-        &mut self,
-        count: u32,
-        motion: &FirstNonWhitespaceMotion,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        self.model.update(ctx, |model, ctx| {
-            match motion {
-                FirstNonWhitespaceMotion::Up => {
-                    model.vim_move_vertical_by_offset(count, TextDirection::Backwards, false, ctx);
-                }
-                FirstNonWhitespaceMotion::Down => {
-                    model.vim_move_vertical_by_offset(count, TextDirection::Forwards, false, ctx);
-                }
-                FirstNonWhitespaceMotion::DownMinusOne => {
-                    model.vim_move_vertical_by_offset(
-                        count - 1,
-                        TextDirection::Forwards,
-                        false,
-                        ctx,
-                    );
-                }
-            }
-            model.vim_move_to_first_nonwhitespace(false, ctx);
-        });
-        self.follow_cursor(ctx);
-        ctx.notify();
-    }
-
-    /// Prompt-specific: `f`/`F`/`t`/`T` are no-ops — single-line prompt
-    /// makes find-char useful only when the cursor is at the start of a long
-    /// line, and TUI's existing horizontal navigation covers that.
-    fn find_char(
-        &mut self,
-        _occurrence_count: u32,
-        _find_char_motion: &FindCharMotion,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        ctx.notify();
-    }
-
-    /// Prompt-specific: `{` / `}` are no-ops — no paragraph structure.
-    fn navigate_paragraph(
-        &mut self,
-        _count: u32,
-        _direction: &Direction,
-        ctx: &mut ViewContext<Self>,
-    ) {
         ctx.notify();
     }
 
@@ -348,42 +294,6 @@ impl VimHandler for TuiInputView {
         ctx.notify();
     }
 
-    // ── Jumps ─────────────────────────────────────────────────────────────────
-
-    fn jump_to_first_line(&mut self, ctx: &mut ViewContext<Self>) {
-        self.model
-            .update(ctx, |model, ctx| model.jump_to_line_column(0, Some(0), ctx));
-        self.follow_cursor(ctx);
-        ctx.notify();
-    }
-
-    fn jump_to_last_line(&mut self, ctx: &mut ViewContext<Self>) {
-        self.model.update(ctx, |model, ctx| {
-            model.vim_move_to_last_line(ctx);
-        });
-        self.follow_cursor(ctx);
-        ctx.notify();
-    }
-    fn jump_to_line(&mut self, line_number: u32, ctx: &mut ViewContext<Self>) {
-        self.model.update(ctx, |model, ctx| {
-            let last_line = model.content().as_ref(ctx).max_point().row as usize;
-            let line = line_number.max(1) as usize;
-            model.jump_to_line_column(line.min(last_line), Some(0), ctx);
-        });
-        self.follow_cursor(ctx);
-        ctx.notify();
-    }
-
-    /// Prompt-specific: matching-bracket jump is a no-op.
-    fn jump_to_matching_bracket(&mut self, ctx: &mut ViewContext<Self>) {
-        ctx.notify();
-    }
-
-    /// Prompt-specific: unmatched-bracket jump is a no-op.
-    fn jump_to_unmatched_bracket(&mut self, _bracket: &BracketChar, ctx: &mut ViewContext<Self>) {
-        ctx.notify();
-    }
-
     // ── Paste ─────────────────────────────────────────────────────────────────
 
     fn paste(
@@ -542,6 +452,19 @@ impl VimHandler for TuiInputView {
         // observes any mode transition and notifies the footer. Nothing more
         // to do here.
         ctx.notify();
+    }
+}
+
+impl TuiInputView {
+    fn navigate_with_shared_motion(
+        &mut self,
+        count: u32,
+        motion: &VimMotion,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        self.model.update(ctx, |model, ctx| {
+            apply_vim_motion(model, count, motion, ctx);
+        });
     }
 }
 
