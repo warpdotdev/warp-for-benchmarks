@@ -1,7 +1,7 @@
 use vim::vim::{
-    BracketChar, CharacterMotion, Direction, FindCharMotion, FirstNonWhitespaceMotion,
-    InsertPosition, LineMotion, ModeTransition, MotionType, TextObjectType, VimHandler, VimMode,
-    VimMotion, VimOperand, VimOperator, VimTextObject, WordMotion,
+    CharacterMotion, Direction, FirstNonWhitespaceMotion, InsertPosition, LineMotion,
+    ModeTransition, MotionType, TextObjectType, VimHandler, VimMode, VimMotion, VimOperand,
+    VimOperator, VimTextObject,
 };
 use warp_editor::content::buffer::{
     AutoScrollBehavior, BufferEditAction, EditOrigin, SelectionOffsets, VimInsertPoint,
@@ -27,115 +27,106 @@ impl VimHandler for CodeEditorView {
         // no-op
     }
 
-    fn navigate_char(
-        &mut self,
-        count: u32,
-        character_motion: &CharacterMotion,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        self.model.update(ctx, |model, ctx| match character_motion {
-            CharacterMotion::Right => {
-                model.vim_move_horizontal_by_offset(count, &Direction::Forward, false, true, ctx);
-            }
-            CharacterMotion::Up => {
-                model.vim_move_vertical_by_offset(count, TextDirection::Backwards, false, ctx);
-            }
-            CharacterMotion::Down => {
-                model.vim_move_vertical_by_offset(count, TextDirection::Forwards, false, ctx);
-            }
-            CharacterMotion::Left => {
-                model.vim_move_horizontal_by_offset(count, &Direction::Backward, false, true, ctx);
-            }
-            CharacterMotion::WrappingLeft => {
-                model.vim_move_horizontal_by_offset(count, &Direction::Backward, false, false, ctx);
-            }
-            CharacterMotion::WrappingRight => {
-                model.vim_move_horizontal_by_offset(count, &Direction::Forward, false, false, ctx);
-            }
-        });
-    }
-
-    fn navigate_word(&mut self, count: u32, word_motion: &WordMotion, ctx: &mut ViewContext<Self>) {
-        let WordMotion {
-            direction,
-            bound,
-            word_type,
-        } = word_motion;
-
-        self.model.update(ctx, |model, ctx| {
-            model.vim_navigate_word(*direction, *bound, *word_type, count, ctx);
-        });
-    }
-
-    fn navigate_line(&mut self, line_count: u32, motion: &LineMotion, ctx: &mut ViewContext<Self>) {
-        self.model.update(ctx, |model, ctx| {
-            match motion {
+    fn navigate_motion(&mut self, count: u32, motion: &VimMotion, ctx: &mut ViewContext<Self>) {
+        self.model.update(ctx, |model, ctx| match motion {
+            VimMotion::Character(character_motion) => match character_motion {
+                CharacterMotion::Right => model.vim_move_horizontal_by_offset(
+                    count,
+                    &Direction::Forward,
+                    false,
+                    true,
+                    ctx,
+                ),
+                CharacterMotion::Up => {
+                    model.vim_move_vertical_by_offset(count, TextDirection::Backwards, false, ctx)
+                }
+                CharacterMotion::Down => {
+                    model.vim_move_vertical_by_offset(count, TextDirection::Forwards, false, ctx)
+                }
+                CharacterMotion::Left => model.vim_move_horizontal_by_offset(
+                    count,
+                    &Direction::Backward,
+                    false,
+                    true,
+                    ctx,
+                ),
+                CharacterMotion::WrappingLeft => model.vim_move_horizontal_by_offset(
+                    count,
+                    &Direction::Backward,
+                    false,
+                    false,
+                    ctx,
+                ),
+                CharacterMotion::WrappingRight => model.vim_move_horizontal_by_offset(
+                    count,
+                    &Direction::Forward,
+                    false,
+                    false,
+                    ctx,
+                ),
+            },
+            VimMotion::Word(word_motion) => model.vim_navigate_word(
+                word_motion.direction,
+                word_motion.bound,
+                word_motion.word_type,
+                count,
+                ctx,
+            ),
+            VimMotion::Line(motion) => match motion {
                 LineMotion::Start => model.vim_move_to_line_bound(LineBound::Start, false, ctx),
                 LineMotion::FirstNonWhitespace => model.vim_move_to_first_nonwhitespace(false, ctx),
                 LineMotion::End => {
-                    // Only moving to the end of the line ($) uses number-repeat (the line-count var)
                     model.vim_move_vertical_by_offset(
-                        line_count.saturating_sub(1),
+                        count.saturating_sub(1),
                         TextDirection::Forwards,
                         false,
                         ctx,
                     );
                     model.vim_move_to_line_bound(LineBound::End, false, ctx);
                 }
-            }
-        })
-    }
-
-    fn first_nonwhitespace_motion(
-        &mut self,
-        count: u32,
-        motion: &FirstNonWhitespaceMotion,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        self.model.update(ctx, |model, ctx| {
-            match motion {
-                FirstNonWhitespaceMotion::Up => {
-                    model.vim_move_vertical_by_offset(count, TextDirection::Backwards, false, ctx);
+            },
+            VimMotion::FirstNonWhitespace(motion) => {
+                match motion {
+                    FirstNonWhitespaceMotion::Up => {
+                        model.vim_move_vertical_by_offset(
+                            count,
+                            TextDirection::Backwards,
+                            false,
+                            ctx,
+                        );
+                    }
+                    FirstNonWhitespaceMotion::Down => model.vim_move_vertical_by_offset(
+                        count,
+                        TextDirection::Forwards,
+                        false,
+                        ctx,
+                    ),
+                    FirstNonWhitespaceMotion::DownMinusOne => model.vim_move_vertical_by_offset(
+                        count - 1,
+                        TextDirection::Forwards,
+                        false,
+                        ctx,
+                    ),
                 }
-                FirstNonWhitespaceMotion::Down => {
-                    model.vim_move_vertical_by_offset(count, TextDirection::Forwards, false, ctx)
-                }
-                FirstNonWhitespaceMotion::DownMinusOne => model.vim_move_vertical_by_offset(
-                    count - 1,
-                    TextDirection::Forwards,
-                    false,
-                    ctx,
-                ),
+                model.vim_move_to_first_nonwhitespace(false, ctx);
             }
-
-            model.vim_move_to_first_nonwhitespace(false, ctx);
-        })
-    }
-
-    fn find_char(
-        &mut self,
-        occurrence_count: u32,
-        find_char_motion: &FindCharMotion,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        self.model.update(ctx, |model, ctx| {
-            model.vim_find_char(
-                false, /* keep_selection */
-                occurrence_count,
-                find_char_motion,
-                ctx,
-            );
-        });
-    }
-
-    fn navigate_paragraph(
-        &mut self,
-        count: u32,
-        direction: &Direction,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        self.model.update(ctx, |model, ctx| {
-            model.vim_move_by_paragraph(count, direction, false, ctx);
+            VimMotion::FindChar(find_char_motion) => {
+                model.vim_find_char(false, count, find_char_motion, ctx);
+            }
+            VimMotion::Paragraph(direction) => {
+                model.vim_move_by_paragraph(count, direction, false, ctx);
+            }
+            VimMotion::JumpToFirstLine => model.jump_to_line_column(0, None, ctx),
+            VimMotion::JumpToLastLine => model.vim_move_to_last_line(ctx),
+            VimMotion::JumpToLine(line_number) => {
+                let max_row = model.content().as_ref(ctx).max_point().row;
+                let row = line_number.max(&1).min(&max_row);
+                model.jump_to_line_column(*row as usize, None, ctx);
+            }
+            VimMotion::JumpToMatchingBracket => model.vim_jump_to_matching_bracket(false, ctx),
+            VimMotion::JumpToUnmatchedBracket(bracket) => {
+                model.vim_jump_to_unmatched_bracket(bracket, false, ctx);
+            }
         });
     }
 
@@ -687,39 +678,6 @@ impl VimHandler for CodeEditorView {
         self.model.update(ctx, |model, ctx| {
             model.vim_select_text_object(text_object, None, ctx);
         });
-    }
-
-    fn jump_to_first_line(&mut self, ctx: &mut ViewContext<Self>) {
-        self.model.update(ctx, |model, ctx| {
-            model.jump_to_line_column(0, None, ctx);
-        });
-    }
-
-    fn jump_to_last_line(&mut self, ctx: &mut ViewContext<Self>) {
-        self.model.update(ctx, |model, ctx| {
-            model.vim_move_to_last_line(ctx);
-        });
-    }
-
-    fn jump_to_line(&mut self, line_number: u32, ctx: &mut ViewContext<Self>) {
-        self.model.update(ctx, |model, ctx| {
-            let buffer = model.content().as_ref(ctx);
-            let max_row = buffer.max_point().row;
-            let row = line_number.max(1).min(max_row);
-            model.jump_to_line_column(row as usize, None, ctx);
-        });
-    }
-
-    fn jump_to_matching_bracket(&mut self, ctx: &mut ViewContext<Self>) {
-        self.model.update(ctx, |model, ctx| {
-            model.vim_jump_to_matching_bracket(false, ctx);
-        })
-    }
-
-    fn jump_to_unmatched_bracket(&mut self, bracket: &BracketChar, ctx: &mut ViewContext<Self>) {
-        self.model.update(ctx, |model, ctx| {
-            model.vim_jump_to_unmatched_bracket(bracket, false, ctx);
-        })
     }
 
     fn paste(
