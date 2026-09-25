@@ -261,6 +261,56 @@ fn test_apply_formatted_text_delta_append() {
 }
 
 #[test]
+fn test_apply_formatted_text_delta_clears_all_content() {
+    App::test((), |mut app| async move {
+        let (buffer, selection) = Buffer::mock_from_markdown(
+            "# Heading\nsome text",
+            None,
+            Box::new(|_, _| IndentBehavior::Ignore),
+            &mut app,
+        );
+
+        let formatted = |buffer: &Buffer| {
+            buffer.range_to_formatted_text(
+                CharOffset::from(1)..buffer.max_charoffset(),
+                StyledBlockBoundaryBehavior::Exclusive,
+            )
+        };
+
+        // Streamed updates can momentarily replace the entire document with empty
+        // content. This must leave a valid, empty buffer rather than panicking when
+        // the cleared content is read back as styled blocks.
+        let old_formatted = app.read_model(&buffer, |buffer, _| formatted(buffer));
+        let clear_delta = compute_formatted_text_delta(old_formatted, parse_markdown("").unwrap());
+        buffer.update(&mut app, |buffer, ctx| {
+            buffer.apply_formatted_text_delta(&clear_delta, selection.clone(), ctx);
+        });
+
+        let (exported, max_charoffset) = app.read_model(&buffer, |buffer, _| {
+            (buffer.markdown_unescaped(), buffer.max_charoffset())
+        });
+        assert_eq!(exported, "");
+        assert_eq!(max_charoffset, CharOffset::from(1));
+
+        // Streaming continues after the clear, so the buffer must still accept
+        // subsequent updates and restore content correctly.
+        let restored_markdown = "# Restored\nmore text";
+        let restore_delta = app.read_model(&buffer, |buffer, _| {
+            compute_formatted_text_delta(
+                formatted(buffer),
+                parse_markdown(restored_markdown).unwrap(),
+            )
+        });
+        buffer.update(&mut app, |buffer, ctx| {
+            buffer.apply_formatted_text_delta(&restore_delta, selection.clone(), ctx);
+        });
+
+        let exported = app.read_model(&buffer, |buffer, _| buffer.markdown_unescaped());
+        assert_eq!(exported.trim_end(), restored_markdown);
+    });
+}
+
+#[test]
 fn test_image_html_serialization() {
     App::test((), |mut app| async move {
         let markdown = "![Alt text](image.png)\n";

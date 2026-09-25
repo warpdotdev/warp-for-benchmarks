@@ -1070,6 +1070,19 @@ impl Buffer {
 
         new_content.push_tree(buffer_cursor.suffix());
         drop(buffer_cursor);
+
+        // A valid buffer must always contain at least one block marker and end as plain text. A
+        // full-document replacement with empty text (e.g. a streamed update that momentarily clears
+        // all formatted content) consumes the initial marker without inserting one back, leaving
+        // empty content that panics when it is later read as styled blocks. Restore the default
+        // plain text marker so the buffer stays valid.
+        if new_content.is_empty() {
+            new_content.push(BufferText::BlockMarker {
+                marker_type: BufferBlockStyle::PlainText,
+            });
+            total_length += 1;
+        }
+
         self.content = new_content;
 
         // If insertion is not on selection, we want to clamp instead of invalidating the anchors.
