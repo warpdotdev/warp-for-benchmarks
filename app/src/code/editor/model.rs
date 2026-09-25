@@ -17,15 +17,16 @@ use rangemap::{RangeMap, RangeSet};
 use string_offset::CharOffset;
 use syntax_tree::{ColorMap, DecorationStateEvent, SyntaxTreeState};
 use vec1::{Vec1, vec1};
+use vim::navigation::{self, HorizontalBoundary};
 use vim::vim::{
     BracketChar, CharacterMotion, Direction, FindCharMotion, FirstNonWhitespaceMotion,
     InsertPosition, LineMotion, MotionType, TextObjectInclusion, TextObjectType, VimOperator,
     VimTextObject, WordBound, WordMotion, WordType,
 };
 use vim::{
-    find_next_paragraph_end, find_previous_paragraph_start, vim_a_block, vim_a_paragraph,
-    vim_a_quote, vim_a_word, vim_find_char_on_line, vim_find_matching_bracket, vim_inner_block,
-    vim_inner_paragraph, vim_inner_quote, vim_inner_word, vim_word_iterator_from_offset,
+    vim_a_block, vim_a_paragraph, vim_a_quote, vim_a_word, vim_find_char_on_line,
+    vim_find_matching_bracket, vim_inner_block, vim_inner_paragraph, vim_inner_quote,
+    vim_inner_word, vim_word_iterator_from_offset,
 };
 use warp_core::platform::SessionPlatform;
 use warp_core::semantic_selection::SemanticSelection;
@@ -2659,87 +2660,20 @@ impl CodeEditorModel {
         let current_selections = selection_model.selection_offsets();
 
         let new_selections = current_selections.mapped(|selection| {
-            let mut head = selection.head;
-
-            if stop_at_line_boundary {
-                // For repeat motions that should not cross line boundaries, bound the movement within the line.
-                let head_point = head.to_buffer_point(buffer);
-                let offset_change = match direction {
-                    Direction::Backward => u32::min(head_point.column, char_count),
-                    Direction::Forward => {
-                        let line_len = buffer.line_len(head_point.row);
-                        u32::min(line_len.saturating_sub(head_point.column), char_count)
-                    }
-                };
-
-                head = match direction {
-                    Direction::Backward => {
-                        head.saturating_sub(&CharOffset::from(offset_change as usize))
-                    }
-                    Direction::Forward => {
-                        let max_offset = buffer.max_charoffset();
-                        cmp::min(max_offset, head + offset_change as usize)
-                    }
-                };
+            let boundary = if stop_at_line_boundary {
+                HorizontalBoundary::Line
             } else {
-                // Wrapping behavior: step using CharOffsets only and skip over newline characters
-                let max_offset = buffer.max_charoffset();
-                for _ in 0..char_count {
-                    match direction {
-                        Direction::Forward => {
-                            if head >= max_offset {
-                                break;
-                            }
-                            let next = cmp::min(max_offset, head + 1);
-
-                            if let Some('\n') = buffer.char_at(next) {
-                                if keep_selection {
-                                    // When selecting (operator-pending), treat the newline as a counted step.
-                                    head = next;
-                                } else {
-                                    let after_next = cmp::min(max_offset, next + 1);
-                                    if let Some('\n') = buffer.char_at(after_next) {
-                                        // If two chars away is a newline, we have an empty line below
-                                        // us that we want to land on
-                                        head = next;
-                                    } else {
-                                        // If two chars away is not a newline, skip the end-of-line newline
-                                        head = after_next;
-                                    }
-                                }
-                            } else {
-                                head = next;
-                            }
-                        }
-                        Direction::Backward => {
-                            if head <= CharOffset::from(1) {
-                                break;
-                            }
-                            let prev = head.saturating_sub(&CharOffset::from(1));
-
-                            if let Some('\n') = buffer.char_at(prev) {
-                                if keep_selection {
-                                    // When selecting (operator-pending), treat the newline as a counted step.
-                                    head = prev;
-                                } else {
-                                    let prev2 = prev.saturating_sub(&CharOffset::from(1));
-                                    if let Some('\n') = buffer.char_at(prev2) {
-                                        // If two chars before is a newline, we have an empty line above
-                                        // us that we want to land on
-                                        head = prev;
-                                    } else {
-                                        // If two chars before is not a newline, skip the end-of-line newline
-                                        head = prev2;
-                                    }
-                                }
-                            } else {
-                                // Normal move
-                                head = prev;
-                            }
-                        }
-                    }
-                }
-            }
+                HorizontalBoundary::CodeEditorWrap { keep_selection }
+            };
+            let head = navigation::horizontal(
+                buffer,
+                selection.head,
+                buffer.max_charoffset(),
+                char_count,
+                *direction,
+                boundary,
+                |row| buffer.line_len(row),
+            );
 
             SelectionOffsets {
                 head,
@@ -2787,14 +2721,15 @@ impl CodeEditorModel {
                 let cursor = current_selection.head;
                 let point = cursor.to_buffer_point(buffer);
 
-                let target_row = match direction {
-                    TextDirection::Backwards => point.row.saturating_sub(count),
-                    TextDirection::Forwards => cmp::min(max_row, point.row.saturating_add(count)),
+                let direction = match direction {
+                    TextDirection::Backwards => Direction::Backward,
+                    TextDirection::Forwards => Direction::Forward,
                 };
-
-                let line_len = buffer.line_len(target_row);
-                let new_col = cmp::min(goal_cols[i], line_len);
-                let new_offset = Point::new(target_row, new_col).to_buffer_char_offset(buffer);
+                let destination =
+                    navigation::vertical(point, max_row, count, direction, goal_cols[i], |row| {
+                        buffer.line_len(row)
+                    });
+                let new_offset = destination.to_buffer_char_offset(buffer);
 
                 SelectionOffsets {
                     head: new_offset,
@@ -2837,12 +2772,19 @@ impl CodeEditorModel {
             let cursor_offset = selection_offset.head;
             let point = cursor_offset.to_buffer_point(content);
 
-            let new_column = match bound {
-                LineBound::Start => 0,
-                LineBound::End => content.line_len(point.row),
+            let motion = match bound {
+                LineBound::Start => LineMotion::Start,
+                LineBound::End => LineMotion::End,
             };
-
-            let new_offset = Point::new(point.row, new_column).to_buffer_char_offset(content);
+            let destination = navigation::line(
+                point,
+                content.max_point().row,
+                1,
+                motion,
+                |row| content.line_len(row),
+                |_| 0,
+            );
+            let new_offset = destination.to_buffer_char_offset(content);
 
             SelectionOffsets {
                 head: new_offset,
@@ -2870,20 +2812,14 @@ impl CodeEditorModel {
         let current_selections = selection_model.selection_offsets();
         let max = buffer.max_charoffset();
         let new_selections = current_selections.mapped(|selection| {
-            let mut offset = selection.head;
-            match direction {
-                Direction::Forward => {
-                    for _ in 0..count {
-                        offset = find_next_paragraph_end(buffer, offset).unwrap_or(max);
-                    }
-                }
-                Direction::Backward => {
-                    for _ in 0..count {
-                        offset = find_previous_paragraph_start(buffer, offset)
-                            .unwrap_or(CharOffset::from(1));
-                    }
-                }
-            }
+            let offset = navigation::paragraph(
+                buffer,
+                selection.head,
+                max,
+                CharOffset::from(1),
+                count,
+                *direction,
+            );
             SelectionOffsets {
                 head: offset,
                 tail: if keep_selection {
@@ -2913,19 +2849,13 @@ impl CodeEditorModel {
         let new_selections = current_selections.mapped(|selection| {
             let start_offset = selection.head;
 
-            let end_offset = match vim_word_iterator_from_offset(
-                start_offset,
+            let end_offset = navigation::word(
                 buffer,
-                direction,
-                bound,
-                word_type,
-            ) {
-                Ok(boundaries) => boundaries
-                    .take(word_count as usize)
-                    .last()
-                    .unwrap_or(start_offset),
-                _ => start_offset,
-            };
+                start_offset,
+                word_count,
+                &WordMotion::new(direction, bound, word_type),
+            )
+            .unwrap_or(start_offset);
 
             SelectionOffsets {
                 head: end_offset,
@@ -3455,30 +3385,7 @@ impl CodeEditorModel {
         let new_selections = current_selections.mapped(|selection| {
             let cursor = selection.head;
 
-            // Create char iterator from current position to the end of the line
-            let line_end = buffer.containing_line_end(selection.head);
-            let line_text = buffer.text_in_range(cursor..line_end).into_string();
-            let mut iter = line_text.chars();
-
-            let Some(c) = iter.next() else {
-                return selection;
-            };
-
-            let (bracket, start_offset) = match BracketChar::try_from(c) {
-                Ok(bracket) => (bracket, cursor),
-
-                Err(_) => match iter
-                    .enumerate()
-                    .find_map(|(i, c)| Some((i, BracketChar::try_from(c).ok()?)))
-                {
-                    None => return selection,
-                    Some((i, bracket)) => (bracket, cursor + i + 1),
-                },
-            };
-
-            if let Some(bracket_position) =
-                vim_find_matching_bracket(buffer, &bracket, start_offset)
-            {
+            if let Some(bracket_position) = navigation::matching_bracket(buffer, cursor) {
                 SelectionOffsets {
                     head: bracket_position,
                     tail: if keep_selection {

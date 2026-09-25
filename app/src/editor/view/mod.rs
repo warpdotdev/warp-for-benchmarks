@@ -45,8 +45,8 @@ use vim::vim::{
     VimTextObject, WordBound, WordMotion, WordType,
 };
 use vim::{
-    vim_a_block, vim_a_paragraph, vim_a_quote, vim_a_word, vim_inner_block, vim_inner_paragraph,
-    vim_inner_quote, vim_inner_word, vim_word_iterator_from_offset,
+    navigation, vim_a_block, vim_a_paragraph, vim_a_quote, vim_a_word, vim_inner_block,
+    vim_inner_paragraph, vim_inner_quote, vim_inner_word,
 };
 use warp_completer::completer::Description;
 use warp_core::semantic_selection::SemanticSelection;
@@ -2166,13 +2166,11 @@ impl VimHandler for EditorView {
         ctx: &mut ViewContext<Self>,
     ) {
         self.change_selections(ctx, |editor_model, ctx| {
-            match motion {
-                FirstNonWhitespaceMotion::Up => editor_model.move_up_by_offset(count, ctx),
-                FirstNonWhitespaceMotion::Down => editor_model.move_down_by_offset(count, ctx),
-                FirstNonWhitespaceMotion::DownMinusOne => {
-                    editor_model.move_down_by_offset(count - 1, ctx)
-                }
-            };
+            let (direction, steps) = navigation::first_nonwhitespace_step(count, *motion);
+            match direction {
+                Direction::Backward => editor_model.move_up_by_offset(steps, ctx),
+                Direction::Forward => editor_model.move_down_by_offset(steps, ctx),
+            }
             editor_model.cursor_line_start_non_whitespace(false /* keep_selection */, ctx);
         });
     }
@@ -2516,7 +2514,7 @@ impl VimHandler for EditorView {
     fn jump_to_line(&mut self, line_number: u32, ctx: &mut ViewContext<Self>) {
         self.change_selections(ctx, |editor_model, ctx| {
             let max_row = editor_model.buffer(ctx).max_point().row;
-            let row = line_number.saturating_sub(1).min(max_row);
+            let row = navigation::jump_to_line(line_number, max_row, 0);
             let point = Point::new(row, 0);
             editor_model.reset_selections_to_point(&point, ctx);
         });
@@ -7840,9 +7838,7 @@ impl EditorView {
         if self.single_cursor_at_autosuggestion_beginning(ctx) {
             self.insert_autosuggestion(
                 |text| {
-                    let Ok(iter) = vim_word_iterator_from_offset(
-                        0,
-                        text,
+                    let motion = WordMotion::new(
                         Direction::Forward,
                         // NOTE: We use `WordBound::End` here instead of the `bound` parameter.
                         // This converts a `w` motion to a `e` with the exact same reasoning that
@@ -7850,11 +7846,8 @@ impl EditorView {
                         // https://vimhelp.org/motion.txt.html#WORD:~:text=before%20the%20fold.-,Special%20case,-%3A%20%22cw%22%20and
                         WordBound::End,
                         word_type,
-                    ) else {
-                        return CharOffset::zero();
-                    };
-                    iter.take(word_count as usize)
-                        .last()
+                    );
+                    navigation::word(text, CharOffset::zero(), word_count, &motion)
                         .map(|offset| {
                             // We have to add 1 to the offset because the char the block cursor is
                             // on should be included. The cursor line-capping will take care of
@@ -7876,24 +7869,17 @@ impl EditorView {
                         continue;
                     };
 
-                    let Ok(boundaries) = vim_word_iterator_from_offset(
-                        end_offset,
+                    let Some(destination) = navigation::word(
                         buffer,
-                        Direction::Forward,
-                        bound,
-                        word_type,
+                        end_offset,
+                        word_count,
+                        &WordMotion::new(Direction::Forward, bound, word_type),
                     ) else {
                         continue;
                     };
 
                     let cursor = buffer
-                        .anchor_at(
-                            boundaries
-                                .take(word_count as usize)
-                                .last()
-                                .unwrap_or(end_offset),
-                            AnchorBias::Right,
-                        )
+                        .anchor_at(destination, AnchorBias::Right)
                         .unwrap_or_else(|_| selection.end().clone());
 
                     selection.set_selection(Selection::single_cursor(cursor));
@@ -7920,24 +7906,17 @@ impl EditorView {
                     continue;
                 };
 
-                let Ok(boundaries) = vim_word_iterator_from_offset(
-                    end_offset,
+                let Some(destination) = navigation::word(
                     buffer,
-                    Direction::Backward,
-                    bound,
-                    word_type,
+                    end_offset,
+                    word_count,
+                    &WordMotion::new(Direction::Backward, bound, word_type),
                 ) else {
                     continue;
                 };
 
                 let cursor = buffer
-                    .anchor_at(
-                        boundaries
-                            .take(word_count as usize)
-                            .last()
-                            .unwrap_or(end_offset),
-                        AnchorBias::Left,
-                    )
+                    .anchor_at(destination, AnchorBias::Left)
                     .unwrap_or_else(|_| selection.end().clone());
 
                 selection.set_selection(Selection::single_cursor(cursor));
