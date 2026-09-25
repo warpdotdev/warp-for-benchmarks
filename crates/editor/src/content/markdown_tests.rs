@@ -261,6 +261,58 @@ fn test_apply_formatted_text_delta_append() {
 }
 
 #[test]
+fn test_apply_formatted_text_delta_replacing_all_content_with_nothing() {
+    App::test((), |mut app| async move {
+        let (buffer, selection) = Buffer::mock_from_markdown(
+            "# Plan\n\n- step one",
+            None,
+            Box::new(|_, _| IndentBehavior::Ignore),
+            &mut app,
+        );
+
+        let old_formatted = app.read_model(&buffer, |buffer, _| {
+            buffer.range_to_formatted_text(
+                CharOffset::from(1)..buffer.max_charoffset(),
+                StyledBlockBoundaryBehavior::Inclusive,
+            )
+        });
+        let delta = compute_formatted_text_delta(old_formatted, parse_markdown("").unwrap());
+        assert_eq!(delta.common_prefix_lines, 0);
+        assert!(delta.new_suffix.is_empty());
+
+        buffer.update(&mut app, |buffer, ctx| {
+            buffer.apply_formatted_text_delta(&delta, selection.clone(), ctx);
+        });
+
+        app.read_model(&buffer, |buffer, ctx| {
+            selection.as_ref(ctx).validate_buffer(ctx);
+            assert_eq!(buffer.debug(), "<text>");
+            assert_eq!(buffer.max_charoffset(), CharOffset::from(1));
+            assert_eq!(
+                selection.as_ref(ctx).selection_offsets().first().head,
+                CharOffset::from(1)
+            );
+        });
+
+        let new_markdown = "# Plan\n";
+        let new_formatted = parse_markdown(new_markdown).unwrap();
+        let old_formatted = app.read_model(&buffer, |buffer, _| {
+            buffer.range_to_formatted_text(
+                CharOffset::from(1)..buffer.max_charoffset(),
+                StyledBlockBoundaryBehavior::Inclusive,
+            )
+        });
+        let delta = compute_formatted_text_delta(old_formatted, new_formatted);
+        buffer.update(&mut app, |buffer, ctx| {
+            buffer.apply_formatted_text_delta(&delta, selection.clone(), ctx);
+        });
+
+        let exported = app.read_model(&buffer, |buffer, _| buffer.markdown_unescaped());
+        assert_eq!(exported, new_markdown);
+    });
+}
+
+#[test]
 fn test_image_html_serialization() {
     App::test((), |mut app| async move {
         let markdown = "![Alt text](image.png)\n";
