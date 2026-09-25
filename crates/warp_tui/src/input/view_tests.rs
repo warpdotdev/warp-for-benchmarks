@@ -821,6 +821,29 @@ fn vim_o_and_uppercase_o_insert_logical_lines() {
     });
 }
 #[test]
+fn vim_find_char_and_space_do_not_leave_the_prompt_line() {
+    App::test((), |mut app| async move {
+        enable_vim_mode(&mut app);
+        let view = app.update(|ctx| {
+            let view = build_view(ctx);
+            view.update(ctx, |view, ctx| view.set_text("ab\ncd", ctx));
+            dispatch(&view, ctx, &[TuiInputAction::HandleEscape]);
+            view
+        });
+
+        app.update(|ctx| type_str(&view, ctx, "gg0"));
+        app.update(|ctx| type_str(&view, ctx, "fb"));
+        app.read(|ctx| assert_eq!(cursor_and_height(&view, ctx).0, Some((0, 0))));
+
+        app.update(|ctx| type_str(&view, ctx, "$ "));
+        app.read(|ctx| {
+            let row = cursor_and_height(&view, ctx).0.map(|(_, row)| row);
+            assert_eq!(row, Some(0));
+        });
+    });
+}
+
+#[test]
 fn vim_uppercase_i_inserts_at_first_nonwhitespace() {
     App::test((), |mut app| async move {
         enable_vim_mode(&mut app);
