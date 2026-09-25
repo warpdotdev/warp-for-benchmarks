@@ -551,8 +551,8 @@ function warp_escape_json
     string join \n $argv | command sed -E 's/(["\\\\])/\\\\\\1/g; s/'\b'/\\\\b/g; s/'\t'/\\\\t/g; s/'\f'/\\\\f/g; s/'\r'/\\\\r/g; $!s/$/\\\\n/' | command tr -d '\n'
 end
 
-# Reports the widget `^R` is bound to, if the user has rebound it away from fish's own
-# history search. Returns non-zero when `^R` is still on a fish default.
+# Reports the widget `^R` is bound to, if it is a supported external history widget whose function
+# is defined. Returns non-zero otherwise, including when `^R` is still on a fish default.
 function warp_external_ctrl_r_widget
   # fish >= 4.0 renamed key specifications, so `bind` echoes back `ctrl-r` where earlier
   # versions echo `\cr`.
@@ -564,8 +564,13 @@ function warp_external_ctrl_r_widget
     # Strip the leading `bind [-M <mode>] <key>`, leaving just the widget/command.
     set widget (string replace --regex -- '^bind (-M \S+ +)?\S+ +' '' "$binding")
   end
-  test -n "$widget"; or return 1
-  echo "$widget"
+  switch "$widget"
+    case 'fzf-history-widget' '_fzf_search_history' '_atuin_search'
+      functions -q -- "$widget"; or return 1
+      echo "$widget"
+    case '*'
+      return 1
+  end
 end
 
 # Reports the widget `^T` is bound to, if the user has rebound it away from fish's default (no
@@ -586,9 +591,9 @@ end
 function warp_run_external_ctrl_r_widget
   set -l result ""
   switch "$_WARP_EXTERNAL_CTRL_R_WIDGET"
-    case 'fzf-history-widget'
+    case 'fzf-history-widget' '_fzf_search_history'
       test -z "$fish_private_mode"; and builtin history merge
-      fzf-history-widget
+      $_WARP_EXTERNAL_CTRL_R_WIDGET
       set result (commandline | string collect)
       commandline -r ''
     case '_atuin_search'
@@ -675,10 +680,9 @@ function warp_bootstrapped
   set -l shell_plugins
   set -g _WARP_EXTERNAL_CTRL_R_WIDGET ""
   set -l warp_ctrl_r_widget (warp_external_ctrl_r_widget)
-  switch "$warp_ctrl_r_widget"
-    case 'fzf-history-widget' '_atuin_search'
-      set -g _WARP_EXTERNAL_CTRL_R_WIDGET "$warp_ctrl_r_widget"
-      set -a shell_plugins external_ctrl_r_history
+  if test -n "$warp_ctrl_r_widget"
+    set -g _WARP_EXTERNAL_CTRL_R_WIDGET "$warp_ctrl_r_widget"
+    set -a shell_plugins external_ctrl_r_history
   end
 
   set -g _WARP_EXTERNAL_CTRL_T_WIDGET ""
