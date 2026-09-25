@@ -19,13 +19,14 @@ use syntax_tree::{ColorMap, DecorationStateEvent, SyntaxTreeState};
 use vec1::{Vec1, vec1};
 use vim::vim::{
     BracketChar, CharacterMotion, Direction, FindCharMotion, FirstNonWhitespaceMotion,
-    InsertPosition, LineMotion, MotionType, TextObjectInclusion, TextObjectType, VimOperator,
-    VimTextObject, WordBound, WordMotion, WordType,
+    InsertPosition, LineMotion, MotionType, TextObjectInclusion, TextObjectType, VimMotion,
+    VimOperator, VimTextObject, WordBound, WordMotion, WordType,
 };
 use vim::{
-    find_next_paragraph_end, find_previous_paragraph_start, vim_a_block, vim_a_paragraph,
-    vim_a_quote, vim_a_word, vim_find_char_on_line, vim_find_matching_bracket, vim_inner_block,
-    vim_inner_paragraph, vim_inner_quote, vim_inner_word, vim_word_iterator_from_offset,
+    VimNavigationConfig, VimNavigationState, find_next_paragraph_end,
+    find_previous_paragraph_start, vim_a_block, vim_a_paragraph, vim_a_quote, vim_a_word,
+    vim_find_char_on_line, vim_find_matching_bracket, vim_inner_block, vim_inner_paragraph,
+    vim_inner_quote, vim_inner_word, vim_motion_destination, vim_word_iterator_from_offset,
 };
 use warp_core::platform::SessionPlatform;
 use warp_core::semantic_selection::SemanticSelection;
@@ -2641,6 +2642,95 @@ impl CodeEditorModel {
         });
 
         self.vim_set_selections_preserving_goal_xs(new_selections, AutoScrollBehavior::None, ctx);
+    }
+
+    pub fn vim_navigate(
+        &mut self,
+        count: u32,
+        motion: &VimMotion,
+        config: VimNavigationConfig,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        let has_trailing_empty_line = matches!(motion, VimMotion::JumpToLastLine)
+            && self.content_string(ctx).into_string().ends_with('\n');
+        let buffer = self.content().as_ref(ctx);
+        let selections = self.selection_model.as_ref(ctx).selection_offsets();
+        let goal_columns = self
+            .selection()
+            .as_ref(ctx)
+            .goal_xs
+            .as_ref()
+            .map(|goal_xs| {
+                goal_xs
+                    .iter()
+                    .map(|goal| goal.as_pixels().as_f32().round() as u32)
+                    .collect::<Vec<_>>()
+            });
+        let destinations = selections
+            .iter()
+            .enumerate()
+            .map(|(index, selection)| {
+                vim_motion_destination(
+                    buffer,
+                    VimNavigationState {
+                        offset: selection.head,
+                        goal_column: goal_columns
+                            .as_ref()
+                            .and_then(|columns| columns.get(index).copied()),
+                    },
+                    count,
+                    motion,
+                    config,
+                )
+            })
+            .collect::<Vec<_>>();
+        let destinations = if matches!(
+            motion,
+            VimMotion::JumpToFirstLine | VimMotion::JumpToLastLine | VimMotion::JumpToLine(_)
+        ) {
+            &destinations[..1]
+        } else {
+            &destinations
+        };
+        let new_selections = Vec1::try_from_vec(
+            destinations
+                .iter()
+                .map(|destination| SelectionOffsets {
+                    head: destination.offset,
+                    tail: destination.offset,
+                })
+                .collect(),
+        )
+        .expect("navigation preserves at least one selection");
+        let autoscroll = match motion {
+            VimMotion::JumpToFirstLine | VimMotion::JumpToLine(_) => AutoScrollBehavior::Override(
+                AutoScrollMode::PositionOffsetInViewportCenter(destinations[0].offset),
+            ),
+            VimMotion::JumpToLastLine if !has_trailing_empty_line => AutoScrollBehavior::Override(
+                AutoScrollMode::PositionOffsetInViewportCenter(destinations[0].offset),
+            ),
+            _ => AutoScrollBehavior::Selection,
+        };
+        self.vim_set_selections(new_selections, autoscroll, ctx);
+
+        if destinations
+            .iter()
+            .all(|destination| destination.goal_column.is_some())
+        {
+            let goal_xs = destinations
+                .iter()
+                .map(|destination| {
+                    ColumnUnit::Pixels(
+                        (destination.goal_column.unwrap_or_default() as usize).into_pixels(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            if let Ok(goal_xs) = Vec1::try_from_vec(goal_xs) {
+                self.selection().update(ctx, |selection, _| {
+                    selection.goal_xs = Some(goal_xs);
+                });
+            }
+        }
     }
 
     /// Horizontal cursor movement for vim in the code editor.

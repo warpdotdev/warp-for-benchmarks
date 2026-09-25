@@ -4656,3 +4656,37 @@ fn vim_handler_w_moves_word_forward() {
         );
     });
 }
+
+#[test]
+fn vim_handler_unsupported_navigation_remains_noop() {
+    App::test((), |mut app| async move {
+        enable_vim_mode(&mut app);
+        let view = app.update(|ctx| {
+            let view = build_view(ctx);
+            type_str(&view, ctx, "(abc)");
+            dispatch(&view, ctx, &[TuiInputAction::HandleEscape]);
+            view
+        });
+        let cursor_before = app.read(|ctx| cursor_and_height(&view, ctx).0);
+
+        app.update(|ctx| {
+            dispatch(
+                &view,
+                ctx,
+                &[
+                    TuiInputAction::Editor(TuiEditorAction::InsertChar('%')),
+                    TuiInputAction::Editor(TuiEditorAction::InsertChar('}')),
+                    TuiInputAction::Editor(TuiEditorAction::InsertChar('f')),
+                    TuiInputAction::Editor(TuiEditorAction::InsertChar('b')),
+                    TuiInputAction::Editor(TuiEditorAction::InsertChar('[')),
+                    TuiInputAction::Editor(TuiEditorAction::InsertChar('(')),
+                ],
+            );
+        });
+
+        assert_eq!(
+            app.read(|ctx| cursor_and_height(&view, ctx).0),
+            cursor_before
+        );
+    });
+}

@@ -1381,6 +1381,40 @@ fn test_vim_jump_to_end_and_beginning() {
 
         vim_user_insert(&editor, "gg", &mut app);
         assert_eq!(cursor_position(&editor, &app), (1, 0));
+
+        editor.update(&mut app, |view, ctx| {
+            view.model.update(ctx, |model, ctx| {
+                let offset = Point::new(3, 0).to_buffer_char_offset(model.buffer().as_ref(ctx));
+                model
+                    .selection()
+                    .update(ctx, |selection, ctx| selection.add_cursor(offset, ctx));
+            });
+        });
+        editor.read(&app, |view, ctx| {
+            assert_eq!(
+                view.model
+                    .as_ref(ctx)
+                    .buffer_selection_model()
+                    .as_ref(ctx)
+                    .selections()
+                    .len(),
+                2
+            );
+        });
+
+        vim_user_insert(&editor, "2G", &mut app);
+        assert_eq!(cursor_position(&editor, &app), (2, 0));
+        editor.read(&app, |view, ctx| {
+            assert_eq!(
+                view.model
+                    .as_ref(ctx)
+                    .buffer_selection_model()
+                    .as_ref(ctx)
+                    .selections()
+                    .len(),
+                1
+            );
+        });
     });
 }
 
