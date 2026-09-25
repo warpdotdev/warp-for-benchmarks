@@ -28,7 +28,7 @@ use string_offset::{ByteOffset, CharOffset};
 use vec1::{Vec1, vec1};
 use vim::vim::{
     BracketChar, CharacterMotion, Direction, FindCharMotion, FirstNonWhitespaceMotion, LineMotion,
-    MotionType, TextObjectInclusion, TextObjectType, VimOperator, WordBound, WordMotion,
+    MotionType, TextObjectInclusion, TextObjectType, VimOperator, WordBound, WordMotion, WordType,
 };
 use vim::{
     find_next_paragraph_end, find_previous_paragraph_start, vim_a_block, vim_a_paragraph,
@@ -2657,6 +2657,45 @@ impl EditorModel {
             },
             ctx,
         );
+    }
+
+    pub fn vim_navigate_word(
+        &mut self,
+        direction: Direction,
+        bound: WordBound,
+        word_type: WordType,
+        word_count: u32,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        let buffer = self.buffer(ctx);
+        let mut new_selections = self.selections(ctx).clone();
+        for selection in new_selections.iter_mut() {
+            let Ok(offset) = selection.end().to_char_offset(buffer) else {
+                continue;
+            };
+            let Ok(boundaries) =
+                vim_word_iterator_from_offset(offset, buffer, direction, bound, word_type)
+            else {
+                continue;
+            };
+            let cursor = buffer
+                .anchor_at(
+                    boundaries
+                        .take(word_count as usize)
+                        .last()
+                        .unwrap_or(offset),
+                    match direction {
+                        Direction::Backward => AnchorBias::Left,
+                        Direction::Forward => AnchorBias::Right,
+                    },
+                )
+                .unwrap_or_else(|_| selection.end().clone());
+
+            selection.set_selection(Selection::single_cursor(cursor));
+            selection.goal_start_column = None;
+            selection.goal_end_column = None;
+        }
+        self.change_selections(new_selections, ctx);
     }
 
     /// Returns true iff any selection is past the last character in the line.

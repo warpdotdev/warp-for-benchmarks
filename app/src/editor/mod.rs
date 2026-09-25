@@ -2,6 +2,7 @@ pub mod accept_autosuggestion_keybinding_view;
 pub mod autosuggestion_ignore_view;
 mod soft_wrap;
 mod view;
+mod vim_navigation;
 
 use std::cmp;
 use std::ops::Range;
@@ -10,6 +11,7 @@ use std::ops::Range;
 /// They should _not_ be able to interface with the internal
 /// details of the editor (e.g. the [`Buffer`]).
 pub use view::*;
+pub use vim_navigation::{VimNavigation, VimNavigationOptions};
 use warpui::AppContext;
 pub use warpui::text::point::Point;
 
