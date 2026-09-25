@@ -14,6 +14,7 @@
 //! - Scroll helpers (`center_cursor_vertically`, `scroll_half_page_*`) — no-op.
 //!
 
+use vim::VimNavigation;
 use vim::vim::{
     BracketChar, CharacterMotion, Direction, FindCharMotion, FirstNonWhitespaceMotion,
     InsertPosition, LineMotion, ModeTransition, MotionType, VimHandler, VimMode, VimMotion,
@@ -58,19 +59,8 @@ impl VimHandler for TuiInputView {
         character_motion: &CharacterMotion,
         ctx: &mut ViewContext<Self>,
     ) {
-        self.model.update(ctx, |model, ctx| match character_motion {
-            CharacterMotion::Right | CharacterMotion::WrappingRight => {
-                model.vim_move_horizontal_by_offset(count, &Direction::Forward, false, true, ctx);
-            }
-            CharacterMotion::Left | CharacterMotion::WrappingLeft => {
-                model.vim_move_horizontal_by_offset(count, &Direction::Backward, false, true, ctx);
-            }
-            CharacterMotion::Up => {
-                model.vim_move_vertical_by_offset(count, TextDirection::Backwards, false, ctx);
-            }
-            CharacterMotion::Down => {
-                model.vim_move_vertical_by_offset(count, TextDirection::Forwards, false, ctx);
-            }
+        self.model.update(ctx, |model, ctx| {
+            model.vim_navigate_character(count, character_motion, false, ctx);
         });
         self.follow_cursor(ctx);
         ctx.notify();
@@ -97,31 +87,16 @@ impl VimHandler for TuiInputView {
     }
 
     fn navigate_word(&mut self, count: u32, word_motion: &WordMotion, ctx: &mut ViewContext<Self>) {
-        let WordMotion {
-            direction,
-            bound,
-            word_type,
-        } = word_motion;
         self.model.update(ctx, |model, ctx| {
-            model.vim_navigate_word(*direction, *bound, *word_type, count, ctx);
+            model.vim_navigate_word_motion(count, word_motion, ctx);
         });
         self.follow_cursor(ctx);
         ctx.notify();
     }
 
     fn navigate_line(&mut self, line_count: u32, motion: &LineMotion, ctx: &mut ViewContext<Self>) {
-        self.model.update(ctx, |model, ctx| match motion {
-            LineMotion::Start => model.vim_move_to_line_bound(LineBound::Start, false, ctx),
-            LineMotion::FirstNonWhitespace => model.vim_move_to_first_nonwhitespace(false, ctx),
-            LineMotion::End => {
-                model.vim_move_vertical_by_offset(
-                    line_count.saturating_sub(1),
-                    TextDirection::Forwards,
-                    false,
-                    ctx,
-                );
-                model.vim_move_to_line_bound(LineBound::End, false, ctx);
-            }
+        self.model.update(ctx, |model, ctx| {
+            model.vim_navigate_line_motion(line_count, motion, ctx);
         });
         self.follow_cursor(ctx);
         ctx.notify();
@@ -134,23 +109,7 @@ impl VimHandler for TuiInputView {
         ctx: &mut ViewContext<Self>,
     ) {
         self.model.update(ctx, |model, ctx| {
-            match motion {
-                FirstNonWhitespaceMotion::Up => {
-                    model.vim_move_vertical_by_offset(count, TextDirection::Backwards, false, ctx);
-                }
-                FirstNonWhitespaceMotion::Down => {
-                    model.vim_move_vertical_by_offset(count, TextDirection::Forwards, false, ctx);
-                }
-                FirstNonWhitespaceMotion::DownMinusOne => {
-                    model.vim_move_vertical_by_offset(
-                        count - 1,
-                        TextDirection::Forwards,
-                        false,
-                        ctx,
-                    );
-                }
-            }
-            model.vim_move_to_first_nonwhitespace(false, ctx);
+            model.vim_navigate_first_nonwhitespace(count, motion, ctx);
         });
         self.follow_cursor(ctx);
         ctx.notify();

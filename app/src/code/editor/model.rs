@@ -23,9 +23,10 @@ use vim::vim::{
     VimTextObject, WordBound, WordMotion, WordType,
 };
 use vim::{
-    find_next_paragraph_end, find_previous_paragraph_start, vim_a_block, vim_a_paragraph,
-    vim_a_quote, vim_a_word, vim_find_char_on_line, vim_find_matching_bracket, vim_inner_block,
-    vim_inner_paragraph, vim_inner_quote, vim_inner_word, vim_word_iterator_from_offset,
+    VimNavigation, find_next_paragraph_end, find_previous_paragraph_start, vim_a_block,
+    vim_a_paragraph, vim_a_quote, vim_a_word, vim_find_char_on_line, vim_find_matching_bracket,
+    vim_inner_block, vim_inner_paragraph, vim_inner_quote, vim_inner_word,
+    vim_word_iterator_from_offset,
 };
 use warp_core::platform::SessionPlatform;
 use warp_core::semantic_selection::SemanticSelection;
@@ -4322,6 +4323,51 @@ impl CodeEditorModel {
                 origin: origin.to_owned(),
             });
         });
+    }
+}
+
+impl VimNavigation for CodeEditorModel {
+    fn vim_move_horizontal(
+        &mut self,
+        count: u32,
+        direction: Direction,
+        stop_at_line_boundary: bool,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        self.vim_move_horizontal_by_offset(count, &direction, false, stop_at_line_boundary, ctx);
+    }
+
+    fn vim_move_vertical(
+        &mut self,
+        count: u32,
+        direction: Direction,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        self.vim_move_vertical_by_offset(
+            count,
+            match direction {
+                Direction::Forward => TextDirection::Forwards,
+                Direction::Backward => TextDirection::Backwards,
+            },
+            false,
+            ctx,
+        );
+    }
+
+    fn vim_move_word(&mut self, count: u32, motion: &WordMotion, ctx: &mut ModelContext<Self>) {
+        self.vim_navigate_word(motion.direction, motion.bound, motion.word_type, count, ctx);
+    }
+
+    fn vim_move_line_start(&mut self, ctx: &mut ModelContext<Self>) {
+        self.vim_move_to_line_bound(LineBound::Start, false, ctx);
+    }
+
+    fn vim_move_line_end(&mut self, ctx: &mut ModelContext<Self>) {
+        self.vim_move_to_line_bound(LineBound::End, false, ctx);
+    }
+
+    fn vim_move_first_nonwhitespace(&mut self, ctx: &mut ModelContext<Self>) {
+        self.vim_move_to_first_nonwhitespace(false, ctx);
     }
 }
 

@@ -45,8 +45,8 @@ use vim::vim::{
     VimTextObject, WordBound, WordMotion, WordType,
 };
 use vim::{
-    vim_a_block, vim_a_paragraph, vim_a_quote, vim_a_word, vim_inner_block, vim_inner_paragraph,
-    vim_inner_quote, vim_inner_word, vim_word_iterator_from_offset,
+    VimNavigation, vim_a_block, vim_a_paragraph, vim_a_quote, vim_a_word, vim_inner_block,
+    vim_inner_paragraph, vim_inner_quote, vim_inner_word, vim_word_iterator_from_offset,
 };
 use warp_completer::completer::Description;
 use warp_core::semantic_selection::SemanticSelection;
@@ -2082,44 +2082,7 @@ impl VimHandler for EditorView {
         }
 
         self.change_selections(ctx, |editor_model, ctx| {
-            match motion {
-                CharacterMotion::Left => {
-                    editor_model.move_cursors_by_offset(
-                        character_count,
-                        &Direction::Backward,
-                        /* keep_selection */ false,
-                        /* stop_at_line_boundary */ true,
-                        ctx,
-                    )
-                }
-                CharacterMotion::Right => {
-                    editor_model.move_cursors_by_offset(
-                        character_count,
-                        &Direction::Forward,
-                        /* keep_selection */ false,
-                        /* stop_at_line_boundary */ true,
-                        ctx,
-                    )
-                }
-                CharacterMotion::WrappingLeft => {
-                    editor_model.move_cursor_ignoring_newlines(
-                        character_count,
-                        &Direction::Backward,
-                        /* keep_selection */ false,
-                        ctx,
-                    )
-                }
-                CharacterMotion::WrappingRight => {
-                    editor_model.move_cursor_ignoring_newlines(
-                        character_count,
-                        &Direction::Forward,
-                        /* keep_selection */ false,
-                        ctx,
-                    )
-                }
-                CharacterMotion::Up => editor_model.move_up_by_offset(character_count, ctx),
-                CharacterMotion::Down => editor_model.move_down_by_offset(character_count, ctx),
-            }
+            editor_model.vim_navigate_character(character_count, motion, true, ctx);
         });
     }
 
@@ -2129,34 +2092,23 @@ impl VimHandler for EditorView {
             bound,
             word_type,
         } = motion;
-        match direction {
-            Direction::Forward => self.vim_cursor_forward_word(*bound, *word_type, word_count, ctx),
-            Direction::Backward => {
-                self.vim_cursor_backward_word(*bound, *word_type, word_count, ctx)
-            }
+        if *direction == Direction::Forward && self.single_cursor_at_autosuggestion_beginning(ctx) {
+            self.vim_cursor_forward_word(*bound, *word_type, word_count, ctx);
+        } else {
+            self.change_selections(ctx, |editor_model, ctx| {
+                editor_model.vim_navigate_word_motion(word_count, motion, ctx);
+            });
         }
     }
 
     fn navigate_line(&mut self, line_count: u32, motion: &LineMotion, ctx: &mut ViewContext<Self>) {
-        match motion {
-            LineMotion::Start => self.move_to_line_start(ctx),
-            LineMotion::FirstNonWhitespace => {
-                self.change_selections(ctx, |editor_model, ctx| {
-                    editor_model.cursor_line_start_non_whitespace(false, ctx);
-                });
-            }
-            LineMotion::End => {
-                if self.single_cursor_at_autosuggestion_beginning(ctx) {
-                    self.insert_full_autosuggestion(ctx);
-                } else {
-                    // Only moving to the end of the line ($) uses number-repeat.
-                    self.change_selections(ctx, |editor_model, ctx| {
-                        editor_model.move_down_by_offset(line_count.saturating_sub(1), ctx);
-                        editor_model.cursor_line_end(false, ctx);
-                    });
-                }
-            }
+        if *motion == LineMotion::End && self.single_cursor_at_autosuggestion_beginning(ctx) {
+            self.insert_full_autosuggestion(ctx);
+            return;
         }
+        self.change_selections(ctx, |editor_model, ctx| {
+            editor_model.vim_navigate_line_motion(line_count, motion, ctx);
+        });
     }
 
     fn first_nonwhitespace_motion(
@@ -2166,14 +2118,7 @@ impl VimHandler for EditorView {
         ctx: &mut ViewContext<Self>,
     ) {
         self.change_selections(ctx, |editor_model, ctx| {
-            match motion {
-                FirstNonWhitespaceMotion::Up => editor_model.move_up_by_offset(count, ctx),
-                FirstNonWhitespaceMotion::Down => editor_model.move_down_by_offset(count, ctx),
-                FirstNonWhitespaceMotion::DownMinusOne => {
-                    editor_model.move_down_by_offset(count - 1, ctx)
-                }
-            };
-            editor_model.cursor_line_start_non_whitespace(false /* keep_selection */, ctx);
+            editor_model.vim_navigate_first_nonwhitespace(count, motion, ctx);
         });
     }
 
@@ -7903,49 +7848,6 @@ impl EditorView {
                 editor_model.change_selections(new_selections, ctx);
             });
         }
-    }
-
-    fn vim_cursor_backward_word(
-        &mut self,
-        bound: WordBound,
-        word_type: WordType,
-        word_count: u32,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        self.change_selections(ctx, |editor_model, ctx| {
-            let buffer = editor_model.buffer(ctx);
-            let mut new_selections = editor_model.selections(ctx).clone();
-            for selection in new_selections.iter_mut() {
-                let Ok(end_offset) = selection.end().to_char_offset(buffer) else {
-                    continue;
-                };
-
-                let Ok(boundaries) = vim_word_iterator_from_offset(
-                    end_offset,
-                    buffer,
-                    Direction::Backward,
-                    bound,
-                    word_type,
-                ) else {
-                    continue;
-                };
-
-                let cursor = buffer
-                    .anchor_at(
-                        boundaries
-                            .take(word_count as usize)
-                            .last()
-                            .unwrap_or(end_offset),
-                        AnchorBias::Left,
-                    )
-                    .unwrap_or_else(|_| selection.end().clone());
-
-                selection.set_selection(Selection::single_cursor(cursor));
-                selection.goal_start_column = None;
-                selection.goal_end_column = None;
-            }
-            editor_model.change_selections(new_selections, ctx);
-        });
     }
 
     fn first_selection<'a, C: ModelAsRef>(&'a self, ctx: &'a C) -> &'a LocalSelection {
