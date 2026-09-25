@@ -779,7 +779,10 @@ fn streamed_agent_update_can_replace_all_content_then_continue() {
 
         model_handle.update(&mut app, |model, ctx| {
             model.apply_streamed_agent_update(&document_id, "Plan", "", ctx);
-            assert_eq!(model.get_document_content(&document_id, ctx).as_deref(), Some(""));
+            assert_eq!(
+                model.get_document_content(&document_id, ctx).as_deref(),
+                Some("")
+            );
 
             model.apply_streamed_agent_update(&document_id, "Plan", "# Updated plan", ctx);
             assert_eq!(
