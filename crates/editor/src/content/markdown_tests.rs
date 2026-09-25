@@ -179,6 +179,56 @@ fn test_gfm_table_html_serialization() {
 }
 
 #[test]
+fn test_apply_formatted_text_delta_empty_replacement() {
+    App::test((), |mut app| async move {
+        let old_markdown = "# Heading\n\nsome body text\n";
+        let (buffer, selection) = Buffer::mock_from_markdown(
+            old_markdown,
+            None,
+            Box::new(|_, _| IndentBehavior::Ignore),
+            &mut app,
+        );
+
+        let read_formatted = |app: &mut App| {
+            app.read_model(&buffer, |buffer, _| {
+                buffer.range_to_formatted_text(
+                    CharOffset::from(1)..buffer.max_charoffset(),
+                    StyledBlockBoundaryBehavior::Exclusive,
+                )
+            })
+        };
+
+        // A streamed document update momentarily clears all formatted content. This must leave a
+        // valid empty buffer rather than a marker-less one that panics when selection handling
+        // reads it.
+        let old_formatted = read_formatted(&mut app);
+        let empty_delta = compute_formatted_text_delta(
+            old_formatted,
+            markdown_parser::FormattedText::new(vec![]),
+        );
+        buffer.update(&mut app, |buffer, ctx| {
+            buffer.apply_formatted_text_delta(&empty_delta, selection.clone(), ctx);
+        });
+
+        let exported = app.read_model(&buffer, |buffer, _| buffer.markdown_unescaped());
+        assert_eq!(exported.trim_end(), "");
+
+        // Streaming then resumes with new content, which must apply cleanly on top of the restored
+        // buffer.
+        let new_markdown = "restored content\n";
+        let new_formatted = parse_markdown(new_markdown).unwrap();
+        let now_formatted = read_formatted(&mut app);
+        let resume_delta = compute_formatted_text_delta(now_formatted, new_formatted);
+        buffer.update(&mut app, |buffer, ctx| {
+            buffer.apply_formatted_text_delta(&resume_delta, selection.clone(), ctx);
+        });
+
+        let exported = app.read_model(&buffer, |buffer, _| buffer.markdown_unescaped());
+        assert_eq!(exported.trim_end(), "restored content");
+    });
+}
+
+#[test]
 fn test_apply_formatted_text_delta_append() {
     App::test((), |mut app| async move {
         let old_markdown = "hello world\n";
