@@ -23,9 +23,10 @@ use vim::vim::{
     VimTextObject, WordBound, WordMotion, WordType,
 };
 use vim::{
-    find_next_paragraph_end, find_previous_paragraph_start, vim_a_block, vim_a_paragraph,
-    vim_a_quote, vim_a_word, vim_find_char_on_line, vim_find_matching_bracket, vim_inner_block,
-    vim_inner_paragraph, vim_inner_quote, vim_inner_word, vim_word_iterator_from_offset,
+    VimMotionTarget, find_next_paragraph_end, find_previous_paragraph_start, vim_a_block,
+    vim_a_paragraph, vim_a_quote, vim_a_word, vim_find_char_on_line, vim_find_matching_bracket,
+    vim_inner_block, vim_inner_paragraph, vim_inner_quote, vim_inner_word,
+    vim_word_iterator_from_offset,
 };
 use warp_core::platform::SessionPlatform;
 use warp_core::semantic_selection::SemanticSelection;
@@ -4105,6 +4106,86 @@ impl CodeEditorModel {
             self.get_diff_content_for_line(&updated_loc, ctx)
         };
         (updated_loc, content, used_fallback)
+    }
+}
+
+impl VimMotionTarget for CodeEditorModel {
+    fn vim_motion_chars(
+        &mut self,
+        count: u32,
+        direction: Direction,
+        wrap_lines: bool,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        self.vim_move_horizontal_by_offset(count, &direction, false, !wrap_lines, ctx);
+    }
+
+    fn vim_motion_lines(&mut self, count: u32, direction: Direction, ctx: &mut ModelContext<Self>) {
+        let direction = match direction {
+            Direction::Backward => TextDirection::Backwards,
+            Direction::Forward => TextDirection::Forwards,
+        };
+        self.vim_move_vertical_by_offset(count, direction, false, ctx);
+    }
+
+    fn vim_motion_line_start(&mut self, ctx: &mut ModelContext<Self>) {
+        self.vim_move_to_line_bound(LineBound::Start, false, ctx);
+    }
+
+    fn vim_motion_line_end(&mut self, ctx: &mut ModelContext<Self>) {
+        self.vim_move_to_line_bound(LineBound::End, false, ctx);
+    }
+
+    fn vim_motion_first_nonwhitespace(&mut self, ctx: &mut ModelContext<Self>) {
+        self.vim_move_to_first_nonwhitespace(false, ctx);
+    }
+
+    fn vim_motion_words(&mut self, count: u32, motion: &WordMotion, ctx: &mut ModelContext<Self>) {
+        self.vim_navigate_word(motion.direction, motion.bound, motion.word_type, count, ctx);
+    }
+
+    fn vim_motion_find_char(
+        &mut self,
+        count: u32,
+        motion: &FindCharMotion,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        self.vim_find_char(false, count, motion, ctx);
+    }
+
+    fn vim_motion_paragraphs(
+        &mut self,
+        count: u32,
+        direction: Direction,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        self.vim_move_by_paragraph(count, &direction, false, ctx);
+    }
+
+    fn vim_motion_first_line(&mut self, ctx: &mut ModelContext<Self>) {
+        self.jump_to_line_column(0, None, ctx);
+    }
+
+    fn vim_motion_last_line(&mut self, ctx: &mut ModelContext<Self>) {
+        self.vim_move_to_last_line(ctx);
+    }
+
+    fn vim_motion_line_number(&mut self, line_number: u32, ctx: &mut ModelContext<Self>) {
+        let max_row = self.content().as_ref(ctx).max_point().row;
+        let row = line_number.max(1).min(max_row);
+        self.jump_to_line_column(row as usize, None, ctx);
+    }
+
+    fn vim_motion_matching_bracket(&mut self, ctx: &mut ModelContext<Self>) {
+        self.vim_jump_to_matching_bracket(false, ctx);
+    }
+
+    fn vim_motion_unmatched_bracket(
+        &mut self,
+        bracket: &BracketChar,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        self.vim_jump_to_unmatched_bracket(bracket, false, ctx);
     }
 }
 
