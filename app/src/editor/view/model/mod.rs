@@ -3002,6 +3002,104 @@ impl EditorModel {
     }
 }
 
+impl vim::navigation::VimNavigation for EditorModel {
+    fn move_horizontal(
+        &mut self,
+        count: u32,
+        direction: Direction,
+        stop_at_line_boundary: bool,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        if stop_at_line_boundary {
+            self.move_cursors_by_offset(count, &direction, false, true, ctx);
+        } else {
+            self.move_cursor_ignoring_newlines(count, &direction, false, ctx);
+        }
+    }
+
+    fn move_vertical(&mut self, count: u32, direction: Direction, ctx: &mut ModelContext<Self>) {
+        match direction {
+            Direction::Forward => self.move_down_by_offset(count, ctx),
+            Direction::Backward => self.move_up_by_offset(count, ctx),
+        }
+    }
+
+    fn move_to_line_start(&mut self, ctx: &mut ModelContext<Self>) {
+        self.cursor_line_start(false, ctx);
+    }
+
+    fn move_to_first_nonwhitespace(&mut self, ctx: &mut ModelContext<Self>) {
+        self.cursor_line_start_non_whitespace(false, ctx);
+    }
+
+    fn move_to_line_end(&mut self, ctx: &mut ModelContext<Self>) {
+        self.cursor_line_end(false, ctx);
+    }
+
+    fn move_word(&mut self, count: u32, motion: &WordMotion, ctx: &mut ModelContext<Self>) {
+        let buffer = self.buffer(ctx);
+        let mut selections = self.selections(ctx).clone();
+        for selection in selections.iter_mut() {
+            let Ok(offset) = selection.end().to_char_offset(buffer) else {
+                continue;
+            };
+            let Ok(boundaries) = vim_word_iterator_from_offset(
+                offset,
+                buffer,
+                motion.direction,
+                motion.bound,
+                motion.word_type,
+            ) else {
+                continue;
+            };
+            let destination = boundaries.take(count as usize).last().unwrap_or(offset);
+            let bias = match motion.direction {
+                Direction::Forward => AnchorBias::Right,
+                Direction::Backward => AnchorBias::Left,
+            };
+            let cursor = buffer
+                .anchor_at(destination, bias)
+                .unwrap_or_else(|_| selection.end().clone());
+            selection.set_selection(Selection::single_cursor(cursor));
+            selection.goal_start_column = None;
+            selection.goal_end_column = None;
+        }
+        self.change_selections(selections, ctx);
+    }
+
+    fn move_to_char(&mut self, count: u32, motion: &FindCharMotion, ctx: &mut ModelContext<Self>) {
+        self.vim_find_char(false, count, motion, ctx);
+    }
+
+    fn move_paragraph(&mut self, count: u32, direction: Direction, ctx: &mut ModelContext<Self>) {
+        self.vim_move_by_paragraph(count, &direction, false, ctx);
+    }
+
+    fn move_to_first_line(&mut self, ctx: &mut ModelContext<Self>) {
+        self.reset_selections_to_point(&Point::new(0, 0), ctx);
+    }
+
+    fn move_to_last_line(&mut self, ctx: &mut ModelContext<Self>) {
+        self.move_to_buffer_end(false, ctx);
+        self.cursor_line_start(false, ctx);
+    }
+
+    fn move_to_line(&mut self, line_number: u32, ctx: &mut ModelContext<Self>) {
+        let row = line_number
+            .saturating_sub(1)
+            .min(self.buffer(ctx).max_point().row);
+        self.reset_selections_to_point(&Point::new(row, 0), ctx);
+    }
+
+    fn move_to_matching_bracket(&mut self, ctx: &mut ModelContext<Self>) {
+        self.vim_move_cursor_to_matching_bracket(false, ctx);
+    }
+
+    fn move_to_unmatched_bracket(&mut self, bracket: &BracketChar, ctx: &mut ModelContext<Self>) {
+        self.vim_move_cursor_to_unmatched_bracket(bracket, false, ctx);
+    }
+}
+
 /// The private interface.
 impl EditorModel {
     fn handle_buffer_event(

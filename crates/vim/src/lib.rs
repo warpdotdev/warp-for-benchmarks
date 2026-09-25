@@ -14,4 +14,5 @@ pub use word_iterator::vim_word_iterator_from_offset;
 mod find_char;
 pub use find_char::vim_find_char_on_line;
 
+pub mod navigation;
 pub mod vim;
