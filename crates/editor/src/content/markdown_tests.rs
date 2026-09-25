@@ -261,6 +261,48 @@ fn test_apply_formatted_text_delta_append() {
 }
 
 #[test]
+fn test_apply_formatted_text_delta_empty_replacement() {
+    App::test((), |mut app| async move {
+        let (buffer, selection) = Buffer::mock_from_markdown(
+            "# Plan\n\n- step one\n",
+            None,
+            Box::new(|_, _| IndentBehavior::Ignore),
+            &mut app,
+        );
+
+        let apply_markdown = |app: &mut App, markdown: &str| {
+            let old_formatted = app.read_model(&buffer, |buffer, _| {
+                buffer.range_to_formatted_text(
+                    CharOffset::from(1)..buffer.max_charoffset(),
+                    StyledBlockBoundaryBehavior::Inclusive,
+                )
+            });
+            let delta =
+                compute_formatted_text_delta(old_formatted, parse_markdown(markdown).unwrap());
+            buffer.update(app, |buffer, ctx| {
+                buffer.apply_formatted_text_delta(&delta, selection.clone(), ctx);
+            });
+        };
+
+        apply_markdown(&mut app, "");
+        assert_eq!(
+            app.read_model(&buffer, |buffer, _| buffer.debug()),
+            "<text>"
+        );
+        assert_eq!(
+            app.read_model(&selection, |selection, _| selection.first_selection_head()),
+            CharOffset::from(1)
+        );
+
+        apply_markdown(&mut app, "# Revised plan\n\n- step two\n");
+        assert_eq!(
+            app.read_model(&buffer, |buffer, _| buffer.markdown_unescaped()),
+            "# Revised plan\n\n* step two\n"
+        );
+    });
+}
+
+#[test]
 fn test_image_html_serialization() {
     App::test((), |mut app| async move {
         let markdown = "![Alt text](image.png)\n";

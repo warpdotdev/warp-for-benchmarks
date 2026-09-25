@@ -1089,15 +1089,20 @@ impl Buffer {
     }
 
     fn ensure_plain_text(&mut self, range: Range<CharOffset>) -> CoreEditorActionResult {
-        let updated_range = if range.end >= self.max_charoffset()
-            && self.block_type_at_point(range.end) != BlockType::Text(BufferBlockStyle::PlainText)
-        {
+        let buffer_end = self.max_charoffset();
+        // An edit that replaced the entire buffer with nothing leaves it without any block marker,
+        // which `block_type_at_point` reports as plain text even though the buffer is invalid.
+        let needs_marker = buffer_end == CharOffset::zero()
+            || (range.end >= buffer_end
+                && self.block_type_at_point(range.end)
+                    != BlockType::Text(BufferBlockStyle::PlainText));
+        let updated_range = if needs_marker {
             log::trace!("Inserting <text> marker at end of buffer");
             self.content.push(BufferText::BlockMarker {
                 marker_type: BufferBlockStyle::PlainText,
             });
 
-            range.end..range.end + 1
+            buffer_end..buffer_end + 1
         } else {
             range.end..range.end
         };
