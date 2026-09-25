@@ -1089,8 +1089,14 @@ impl Buffer {
     }
 
     fn ensure_plain_text(&mut self, range: Range<CharOffset>) -> CoreEditorActionResult {
+        // An empty buffer holds no block marker, yet `block_type_at_point` reports plain text for
+        // it, so the marker check below would skip it and leave the buffer invalid. Treat an empty
+        // buffer as needing a marker so a full-content replacement always ends in plain text.
+        let buffer_is_empty = self.max_charoffset() == CharOffset::zero();
         let updated_range = if range.end >= self.max_charoffset()
-            && self.block_type_at_point(range.end) != BlockType::Text(BufferBlockStyle::PlainText)
+            && (buffer_is_empty
+                || self.block_type_at_point(range.end)
+                    != BlockType::Text(BufferBlockStyle::PlainText))
         {
             log::trace!("Inserting <text> marker at end of buffer");
             self.content.push(BufferText::BlockMarker {

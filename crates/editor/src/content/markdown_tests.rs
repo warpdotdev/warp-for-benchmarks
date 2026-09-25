@@ -261,6 +261,47 @@ fn test_apply_formatted_text_delta_append() {
 }
 
 #[test]
+fn test_apply_formatted_text_delta_empty_replacement_keeps_valid_buffer() {
+    App::test((), |mut app| async move {
+        let (buffer, selection) = Buffer::mock_from_markdown(
+            "# Heading\n\nsome body text\n",
+            None,
+            Box::new(|_, _| IndentBehavior::Ignore),
+            &mut app,
+        );
+
+        let apply_markdown = |app: &mut App, markdown: &str| {
+            let old_formatted = app.read_model(&buffer, |buffer, _| {
+                buffer.range_to_formatted_text(
+                    CharOffset::from(1)..buffer.max_charoffset(),
+                    StyledBlockBoundaryBehavior::Inclusive,
+                )
+            });
+            let new_formatted = parse_markdown(markdown).unwrap();
+            let delta = compute_formatted_text_delta(old_formatted, new_formatted);
+            buffer.update(app, |buffer, ctx| {
+                buffer.apply_formatted_text_delta(&delta, selection.clone(), ctx);
+                // A streamed update that empties the buffer must keep the plain-text marker,
+                // otherwise selection handling reads an invalid empty buffer and panics.
+                buffer.validate(&buffer.internal_anchors);
+            });
+        };
+
+        // A streamed update can momentarily replace the whole formatted document with nothing.
+        apply_markdown(&mut app, "");
+
+        // The buffer is now an empty plain-text document rather than invalid empty content.
+        let exported = app.read_model(&buffer, |buffer, _| buffer.markdown_unescaped());
+        assert_eq!(exported, "");
+
+        // A later streamed update restores content and renders it correctly.
+        apply_markdown(&mut app, "restored body\n");
+        let exported = app.read_model(&buffer, |buffer, _| buffer.markdown_unescaped());
+        assert_eq!(exported.trim_end(), "restored body");
+    });
+}
+
+#[test]
 fn test_image_html_serialization() {
     App::test((), |mut app| async move {
         let markdown = "![Alt text](image.png)\n";
