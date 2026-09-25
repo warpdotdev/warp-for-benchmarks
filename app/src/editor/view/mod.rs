@@ -39,9 +39,9 @@ use snapshot::{EditorHeightShrinkDelay, ViewSnapshot};
 use string_offset::{ByteOffset, CharOffset};
 use vec1::{Vec1, vec1};
 use vim::vim::{
-    CharacterMotion, Direction, InsertPosition, LineMotion, ModeTransition, MotionType, TextObjectInclusion, TextObjectType,
-    VimHandler, VimMode, VimModel, VimMotion, VimOperand, VimOperator, VimState, VimSubscriber,
-    VimTextObject, WordBound, WordMotion, WordType,
+    CharacterMotion, Direction, InsertPosition, LineMotion, ModeTransition, MotionType,
+    TextObjectInclusion, TextObjectType, VimHandler, VimMode, VimModel, VimMotion, VimOperand,
+    VimOperator, VimState, VimSubscriber, VimTextObject, WordBound, WordMotion, WordType,
 };
 use vim::{
     apply_vim_motion, vim_a_block, vim_a_paragraph, vim_a_quote, vim_a_word, vim_inner_block,

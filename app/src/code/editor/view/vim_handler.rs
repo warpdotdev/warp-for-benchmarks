@@ -28,8 +28,9 @@ impl VimHandler for CodeEditorView {
     }
 
     fn navigate(&mut self, count: u32, motion: &VimMotion, ctx: &mut ViewContext<Self>) {
-        self.model
-            .update(ctx, |model, ctx| apply_vim_motion(model, count, motion, ctx));
+        self.model.update(ctx, |model, ctx| {
+            apply_vim_motion(model, count, motion, ctx)
+        });
     }
 
     fn operation(

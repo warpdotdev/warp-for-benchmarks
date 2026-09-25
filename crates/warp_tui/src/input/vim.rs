@@ -93,8 +93,9 @@ impl VimHandler for TuiInputView {
             | VimMotion::Line(_)
             | VimMotion::FirstNonWhitespace(_)
             | VimMotion::JumpToLastLine => {
-                self.model
-                    .update(ctx, |model, ctx| apply_vim_motion(model, count, motion, ctx));
+                self.model.update(ctx, |model, ctx| {
+                    apply_vim_motion(model, count, motion, ctx)
+                });
             }
         }
         self.follow_cursor(ctx);

@@ -52,8 +52,12 @@ pub fn apply_vim_motion<T: VimMotionTarget>(
 ) {
     match motion {
         VimMotion::Character(motion) => match motion {
-            CharacterMotion::Left => target.vim_motion_chars(count, Direction::Backward, false, ctx),
-            CharacterMotion::Right => target.vim_motion_chars(count, Direction::Forward, false, ctx),
+            CharacterMotion::Left => {
+                target.vim_motion_chars(count, Direction::Backward, false, ctx)
+            }
+            CharacterMotion::Right => {
+                target.vim_motion_chars(count, Direction::Forward, false, ctx)
+            }
             CharacterMotion::WrappingLeft => {
                 target.vim_motion_chars(count, Direction::Backward, true, ctx)
             }
