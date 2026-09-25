@@ -2,6 +2,7 @@ use std::ops::Range;
 
 use ai::diff_validation::DiffDelta;
 use chrono::Local;
+use warp_editor::model::CoreEditorModel;
 use warpui::{App, SingletonEntity};
 
 use super::*;
@@ -822,6 +823,53 @@ fn test_streamed_agent_update_matches_reset_with_markdown_for_code_block() {
     });
 }
 
+#[test]
+fn test_streamed_agent_update_can_replace_all_content() {
+    App::test((), |mut app| async move {
+        initialize_app_for_ai_document_tests(&mut app);
+        let model_handle = app.add_model(|_| AIDocumentModel::new_for_test());
+        let document_id = model_handle.update(&mut app, |model, ctx| {
+            model.create_document(
+                "Streaming Test",
+                "# Initial content",
+                AIConversationId::new(),
+                None,
+                ctx,
+            )
+        });
+
+        model_handle.update(&mut app, |model, ctx| {
+            model.apply_streamed_agent_update(&document_id, "Streaming Test", "", ctx);
+        });
+
+        model_handle.read(&app, |model, ctx| {
+            let document = model
+                .get_current_document(&document_id)
+                .expect("document should exist");
+            assert_eq!(document.editor.as_ref(ctx).markdown(ctx), "");
+            assert_eq!(
+                document.editor.as_ref(ctx).content().as_ref(ctx).debug(),
+                "<text>"
+            );
+        });
+
+        model_handle.update(&mut app, |model, ctx| {
+            model.apply_streamed_agent_update(
+                &document_id,
+                "Streaming Test",
+                "# Restored content",
+                ctx,
+            );
+        });
+
+        model_handle.read(&app, |model, ctx| {
+            let content = model
+                .get_document_content(&document_id, ctx)
+                .expect("document should have content");
+            assert_eq!(content.trim_end(), "# Restored content");
+        });
+    });
+}
 #[test]
 fn test_plan_markdown_content_preserves_copyable_structure() {
     App::test((), |mut app| async move {
