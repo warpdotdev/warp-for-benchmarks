@@ -543,6 +543,27 @@ fn vim_visual_change_enters_insert_mode_after_inclusive_delete() {
 }
 
 #[test]
+fn vim_prompt_space_motion_stays_on_its_line() {
+    App::test((), |mut app| async move {
+        enable_vim_mode(&mut app);
+        let view = app.update(|ctx| {
+            let view = build_view(ctx);
+            view.update(ctx, |view, ctx| view.set_text("one\ntwo", ctx));
+            dispatch(&view, ctx, &[TuiInputAction::HandleEscape]);
+            view
+        });
+
+        app.update(|ctx| type_str(&view, ctx, "gg$"));
+        app.read(|ctx| assert_eq!(cursor_and_height(&view, ctx).0, Some((3, 0))));
+        app.update(|ctx| type_str(&view, ctx, " "));
+        app.read(|ctx| {
+            assert_eq!(text(&view, ctx), "one\ntwo");
+            assert_eq!(cursor_and_height(&view, ctx).0, Some((3, 0)));
+        });
+    });
+}
+
+#[test]
 fn vim_normal_backspace_is_a_left_motion() {
     App::test((), |mut app| async move {
         enable_vim_mode(&mut app);

@@ -4532,6 +4532,55 @@ fn test_vim_accept_full_autosuggestions_char() {
 }
 
 #[test]
+fn test_vim_navigation_away_from_autosuggestion_beginning() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let editor = add_editor_vim_normal_mode("echo ", &mut app);
+
+        editor.update(&mut app, |view, ctx| {
+            view.set_autosuggestion(
+                "foo bar",
+                AutosuggestionLocation::EndOfBuffer,
+                AutosuggestionType::Command {
+                    was_intelligent_autosuggestion: false,
+                },
+                ctx,
+            );
+            view.vim_user_insert("$", ctx);
+        });
+        editor.read(&app, |view, ctx| {
+            assert_eq!(view.buffer_text(ctx), "echo ");
+            assert_eq!(
+                view.selected_ranges(ctx),
+                vec![DisplayPoint::new(0, 4)..DisplayPoint::new(0, 4)]
+            );
+        });
+        editor.update(&mut app, |view, ctx| {
+            view.vim_user_insert("h", ctx);
+        });
+        editor.read(&app, |view, ctx| {
+            assert_eq!(view.buffer_text(ctx), "echo ");
+            assert_eq!(
+                view.selected_ranges(ctx),
+                vec![DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3)]
+            );
+        });
+        editor.update(&mut app, |view, ctx| {
+            view.vim_user_insert("l", ctx);
+        });
+
+        editor.read(&app, |view, ctx| {
+            assert_eq!(view.buffer_text(ctx), "echo ");
+            assert_eq!(view.current_autosuggestion_text(), Some("foo bar"));
+            assert_eq!(
+                view.selected_ranges(ctx),
+                vec![DisplayPoint::new(0, 4)..DisplayPoint::new(0, 4)]
+            );
+        });
+    });
+}
+
+#[test]
 fn test_vim_accept_full_autosuggestions_line_end() {
     App::test((), |mut app| async move {
         initialize_app(&mut app);
