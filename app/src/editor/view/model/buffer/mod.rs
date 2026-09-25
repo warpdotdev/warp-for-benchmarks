@@ -25,6 +25,7 @@ use sum_tree::{self, Cursor, FilterCursor, SeekBias, SumTree};
 use time::{Global, Lamport};
 use undo::{LocalUndoStack, UndoHistory};
 use vec1::{Vec1, vec1};
+use vim::VimTextBuffer;
 use warpui::color::ColorU;
 use warpui::text::point::Point;
 use warpui::text::words::is_default_word_boundary;
@@ -3259,6 +3260,20 @@ impl TextBuffer for Buffer {
 
     fn to_offset(&self, point: Point) -> Result<CharOffset> {
         <Point as ToCharOffset>::to_char_offset(&point, self)
+    }
+}
+
+impl VimTextBuffer for Buffer {
+    fn vim_line_len(&self, row: u32) -> u32 {
+        self.line_len(row).unwrap_or_default()
+    }
+
+    fn vim_min_offset(&self) -> CharOffset {
+        CharOffset::zero()
+    }
+
+    fn vim_max_offset(&self) -> CharOffset {
+        self.len()
     }
 }
 

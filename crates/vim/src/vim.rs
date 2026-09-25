@@ -2003,25 +2003,7 @@ where
         );
         match &event.event_type {
             VimEventType::InsertChar(c) => self.insert_char(*c, ctx),
-            VimEventType::Navigate(motion) => match motion {
-                VimMotion::Character(motion) => self.navigate_char(event.count, motion, ctx),
-                VimMotion::Word(motion) => self.navigate_word(event.count, motion, ctx),
-                VimMotion::Line(motion) => self.navigate_line(event.count, motion, ctx),
-                VimMotion::FirstNonWhitespace(motion) => {
-                    self.first_nonwhitespace_motion(event.count, motion, ctx)
-                }
-                VimMotion::FindChar(motion) => self.find_char(event.count, motion, ctx),
-                VimMotion::Paragraph(direction) => {
-                    self.navigate_paragraph(event.count, direction, ctx)
-                }
-                VimMotion::JumpToFirstLine => self.jump_to_first_line(ctx),
-                VimMotion::JumpToLastLine => self.jump_to_last_line(ctx),
-                VimMotion::JumpToLine(line_number) => self.jump_to_line(*line_number, ctx),
-                VimMotion::JumpToMatchingBracket => self.jump_to_matching_bracket(ctx),
-                VimMotion::JumpToUnmatchedBracket(bracket) => {
-                    self.jump_to_unmatched_bracket(bracket, ctx)
-                }
-            },
+            VimEventType::Navigate(motion) => self.navigate(event.count, motion, ctx),
             VimEventType::Operation {
                 operator,
                 operand,
@@ -2100,37 +2082,8 @@ where
 pub trait VimHandler {
     /// A character to be inserted to the buffer.
     fn insert_char(&mut self, c: char, ctx: &mut ViewContext<Self>);
-    /// A one-character motion of the cursor.
-    fn navigate_char(
-        &mut self,
-        count: u32,
-        character_motion: &CharacterMotion,
-        ctx: &mut ViewContext<Self>,
-    );
-    /// Word-related motion of the cursor.
-    fn navigate_word(&mut self, count: u32, word_motion: &WordMotion, ctx: &mut ViewContext<Self>);
-    /// Motions within the current line: 0, ^, $
-    fn navigate_line(&mut self, count: u32, line_motion: &LineMotion, ctx: &mut ViewContext<Self>);
-    fn first_nonwhitespace_motion(
-        &mut self,
-        count: u32,
-        motion: &FirstNonWhitespaceMotion,
-        ctx: &mut ViewContext<Self>,
-    );
-    /// Motions to a particular character on the current line.
-    fn find_char(
-        &mut self,
-        occurrence_count: u32,
-        find_char_motion: &FindCharMotion,
-        ctx: &mut ViewContext<Self>,
-    );
-    /// Navigate by paragraph: { and }.
-    fn navigate_paragraph(
-        &mut self,
-        count: u32,
-        direction: &Direction,
-        ctx: &mut ViewContext<Self>,
-    );
+    /// Move the cursor by `motion`, repeated `count` times.
+    fn navigate(&mut self, count: u32, motion: &VimMotion, ctx: &mut ViewContext<Self>);
     /// For all "operator commands", e.g. d, c, y. See ":help operator" in Vim, or click here:
     /// https://vimdoc.sourceforge.net/htmldoc/motion.html#operator
     fn operation(
@@ -2192,11 +2145,6 @@ pub trait VimHandler {
         ctx: &mut ViewContext<Self>,
     );
     fn visual_text_object(&mut self, text_object: &VimTextObject, ctx: &mut ViewContext<Self>);
-    fn jump_to_first_line(&mut self, ctx: &mut ViewContext<Self>);
-    fn jump_to_last_line(&mut self, ctx: &mut ViewContext<Self>);
-    fn jump_to_line(&mut self, line_number: u32, ctx: &mut ViewContext<Self>);
-    fn jump_to_matching_bracket(&mut self, ctx: &mut ViewContext<Self>);
-    fn jump_to_unmatched_bracket(&mut self, bracket: &BracketChar, ctx: &mut ViewContext<Self>);
     fn paste(
         &mut self,
         count: u32,

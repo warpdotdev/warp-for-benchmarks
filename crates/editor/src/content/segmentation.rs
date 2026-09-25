@@ -4,6 +4,7 @@
 
 use anyhow::anyhow;
 use string_offset::CharOffset;
+use vim::VimTextBuffer;
 use warpui_core::text::TextBuffer;
 use warpui_core::text::point::Point;
 use warpui_core::text::word_boundaries::WordBoundariesPolicy;
@@ -60,6 +61,21 @@ impl TextBuffer for Buffer {
 
     fn to_offset(&self, point: Point) -> anyhow::Result<CharOffset> {
         Ok(point.to_buffer_char_offset(self))
+    }
+}
+
+impl VimTextBuffer for Buffer {
+    fn vim_line_len(&self, row: u32) -> u32 {
+        self.line_len(row)
+    }
+
+    fn vim_min_offset(&self) -> CharOffset {
+        // The first line's block marker occupies offset 0, so text starts at offset 1.
+        CharOffset::from(1)
+    }
+
+    fn vim_max_offset(&self) -> CharOffset {
+        self.max_charoffset()
     }
 }
 

@@ -20,12 +20,13 @@ use vec1::{Vec1, vec1};
 use vim::vim::{
     BracketChar, CharacterMotion, Direction, FindCharMotion, FirstNonWhitespaceMotion,
     InsertPosition, LineMotion, MotionType, TextObjectInclusion, TextObjectType, VimOperator,
-    VimTextObject, WordBound, WordMotion, WordType,
+    VimTextObject, WordBound, WordMotion,
 };
 use vim::{
-    find_next_paragraph_end, find_previous_paragraph_start, vim_a_block, vim_a_paragraph,
-    vim_a_quote, vim_a_word, vim_find_char_on_line, vim_find_matching_bracket, vim_inner_block,
-    vim_inner_paragraph, vim_inner_quote, vim_inner_word, vim_word_iterator_from_offset,
+    VimCursorModel, vim_a_block, vim_a_paragraph, vim_a_quote, vim_a_word,
+    vim_find_char_destination, vim_find_matching_bracket, vim_inner_block, vim_inner_paragraph,
+    vim_inner_quote, vim_inner_word, vim_line_bounded_destination,
+    vim_matching_bracket_destination, vim_paragraph_destination, vim_word_iterator_from_offset,
 };
 use warp_core::platform::SessionPlatform;
 use warp_core::semantic_selection::SemanticSelection;
@@ -2662,25 +2663,8 @@ impl CodeEditorModel {
             let mut head = selection.head;
 
             if stop_at_line_boundary {
-                // For repeat motions that should not cross line boundaries, bound the movement within the line.
-                let head_point = head.to_buffer_point(buffer);
-                let offset_change = match direction {
-                    Direction::Backward => u32::min(head_point.column, char_count),
-                    Direction::Forward => {
-                        let line_len = buffer.line_len(head_point.row);
-                        u32::min(line_len.saturating_sub(head_point.column), char_count)
-                    }
-                };
-
-                head = match direction {
-                    Direction::Backward => {
-                        head.saturating_sub(&CharOffset::from(offset_change as usize))
-                    }
-                    Direction::Forward => {
-                        let max_offset = buffer.max_charoffset();
-                        cmp::min(max_offset, head + offset_change as usize)
-                    }
-                };
+                head = vim_line_bounded_destination(buffer, head, char_count, *direction)
+                    .unwrap_or(head);
             } else {
                 // Wrapping behavior: step using CharOffsets only and skip over newline characters
                 let max_offset = buffer.max_charoffset();
@@ -2868,22 +2852,8 @@ impl CodeEditorModel {
         let buffer = self.content().as_ref(ctx);
         let selection_model = self.selection_model.as_ref(ctx);
         let current_selections = selection_model.selection_offsets();
-        let max = buffer.max_charoffset();
         let new_selections = current_selections.mapped(|selection| {
-            let mut offset = selection.head;
-            match direction {
-                Direction::Forward => {
-                    for _ in 0..count {
-                        offset = find_next_paragraph_end(buffer, offset).unwrap_or(max);
-                    }
-                }
-                Direction::Backward => {
-                    for _ in 0..count {
-                        offset = find_previous_paragraph_start(buffer, offset)
-                            .unwrap_or(CharOffset::from(1));
-                    }
-                }
-            }
+            let offset = vim_paragraph_destination(buffer, selection.head, *direction, count);
             SelectionOffsets {
                 head: offset,
                 tail: if keep_selection {
@@ -2891,45 +2861,6 @@ impl CodeEditorModel {
                 } else {
                     offset
                 },
-            }
-        });
-
-        self.vim_set_selections(new_selections, AutoScrollBehavior::Selection, ctx);
-    }
-
-    /// Navigate by words using vim-specific word boundaries.
-    pub fn vim_navigate_word(
-        &mut self,
-        direction: Direction,
-        bound: WordBound,
-        word_type: WordType,
-        word_count: u32,
-        ctx: &mut ModelContext<Self>,
-    ) {
-        let buffer = self.content().as_ref(ctx);
-        let selection_model = self.selection_model.as_ref(ctx);
-        let current_selections = selection_model.selection_offsets();
-
-        let new_selections = current_selections.mapped(|selection| {
-            let start_offset = selection.head;
-
-            let end_offset = match vim_word_iterator_from_offset(
-                start_offset,
-                buffer,
-                direction,
-                bound,
-                word_type,
-            ) {
-                Ok(boundaries) => boundaries
-                    .take(word_count as usize)
-                    .last()
-                    .unwrap_or(start_offset),
-                _ => start_offset,
-            };
-
-            SelectionOffsets {
-                head: end_offset,
-                tail: end_offset,
             }
         });
 
@@ -3454,31 +3385,7 @@ impl CodeEditorModel {
 
         let new_selections = current_selections.mapped(|selection| {
             let cursor = selection.head;
-
-            // Create char iterator from current position to the end of the line
-            let line_end = buffer.containing_line_end(selection.head);
-            let line_text = buffer.text_in_range(cursor..line_end).into_string();
-            let mut iter = line_text.chars();
-
-            let Some(c) = iter.next() else {
-                return selection;
-            };
-
-            let (bracket, start_offset) = match BracketChar::try_from(c) {
-                Ok(bracket) => (bracket, cursor),
-
-                Err(_) => match iter
-                    .enumerate()
-                    .find_map(|(i, c)| Some((i, BracketChar::try_from(c).ok()?)))
-                {
-                    None => return selection,
-                    Some((i, bracket)) => (bracket, cursor + i + 1),
-                },
-            };
-
-            if let Some(bracket_position) =
-                vim_find_matching_bracket(buffer, &bracket, start_offset)
-            {
+            if let Some(bracket_position) = vim_matching_bracket_destination(buffer, cursor) {
                 SelectionOffsets {
                     head: bracket_position,
                     tail: if keep_selection {
@@ -3578,23 +3485,13 @@ impl CodeEditorModel {
         let current_selections = selection_model.selection_offsets();
 
         let new_selections = current_selections.mapped(|selection| {
-            let head_point = selection.head.to_buffer_point(buffer);
-            let current_column = head_point.column as usize;
-
-            let line_start = buffer.containing_line_start(selection.head);
-            let line_end = buffer.containing_line_end(selection.head);
-            let line_text = buffer.text_in_range(line_start..line_end).into_string();
-
-            if let Some(new_column) = vim_find_char_on_line(
-                &line_text,
-                current_column,
+            if let Some(new_head) = vim_find_char_destination(
+                buffer,
+                selection.head,
                 motion,
                 occurrence_count,
                 keep_selection,
             ) {
-                let target_point = Point::new(head_point.row, new_column as u32);
-                let new_head = target_point.to_buffer_char_offset(buffer);
-
                 SelectionOffsets {
                     head: new_head,
                     tail: if keep_selection {
@@ -4353,6 +4250,62 @@ impl PlainTextEditorModel for CodeEditorModel {
                 ctx,
             );
         }
+    }
+}
+
+impl VimCursorModel for CodeEditorModel {
+    type Buffer = Buffer;
+
+    fn vim_move_cursors<F>(&mut self, destination: F, ctx: &mut ModelContext<Self>)
+    where
+        F: Fn(&Buffer, CharOffset) -> Option<CharOffset>,
+    {
+        let buffer = self.content().as_ref(ctx);
+        let new_selections =
+            self.selection_model
+                .as_ref(ctx)
+                .selection_offsets()
+                .mapped(|selection| match destination(buffer, selection.head) {
+                    Some(head) => SelectionOffsets { head, tail: head },
+                    None => selection,
+                });
+        self.vim_set_selections(new_selections, AutoScrollBehavior::Selection, ctx);
+    }
+
+    fn vim_move_vertically(
+        &mut self,
+        count: u32,
+        direction: Direction,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        let direction = match direction {
+            Direction::Backward => TextDirection::Backwards,
+            Direction::Forward => TextDirection::Forwards,
+        };
+        self.vim_move_vertical_by_offset(count, direction, false, ctx);
+    }
+
+    fn vim_move_across_lines(
+        &mut self,
+        count: u32,
+        direction: Direction,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        self.vim_move_horizontal_by_offset(count, &direction, false, false, ctx);
+    }
+
+    fn vim_jump_to_first_line(&mut self, ctx: &mut ModelContext<Self>) {
+        self.jump_to_line_column(0, None, ctx);
+    }
+
+    fn vim_jump_to_last_line(&mut self, ctx: &mut ModelContext<Self>) {
+        self.vim_move_to_last_line(ctx);
+    }
+
+    fn vim_jump_to_line(&mut self, line_number: u32, ctx: &mut ModelContext<Self>) {
+        let max_row = self.content().as_ref(ctx).max_point().row;
+        let row = line_number.max(1).min(max_row);
+        self.jump_to_line_column(row as usize, None, ctx);
     }
 }
 

@@ -4021,7 +4021,7 @@ fn test_vim_line_navigation() {
         let editor_view = add_editor_vim_normal_mode("   echo hello", &mut app);
 
         editor_view.update(&mut app, |editor, ctx| {
-            editor.navigate_line(1, &LineMotion::End, ctx);
+            editor.navigate(1, &VimMotion::Line(LineMotion::End), ctx);
         });
 
         editor_view.read(&app, |editor, app| {
@@ -4032,7 +4032,7 @@ fn test_vim_line_navigation() {
         });
 
         editor_view.update(&mut app, |editor, ctx| {
-            editor.navigate_line(1, &LineMotion::FirstNonWhitespace, ctx);
+            editor.navigate(1, &VimMotion::Line(LineMotion::FirstNonWhitespace), ctx);
         });
 
         editor_view.read(&app, |editor, app| {
@@ -4043,7 +4043,7 @@ fn test_vim_line_navigation() {
         });
 
         editor_view.update(&mut app, |editor, ctx| {
-            editor.navigate_line(1, &LineMotion::Start, ctx);
+            editor.navigate(1, &VimMotion::Line(LineMotion::Start), ctx);
         });
 
         editor_view.read(&app, |editor, app| {
@@ -4644,6 +4644,54 @@ fn test_vim_accept_partial_autosuggestions_word() {
             assert_eq!(
                 view.selected_ranges(ctx),
                 vec![DisplayPoint::new(0, 15)..DisplayPoint::new(0, 15)]
+            );
+        });
+    });
+}
+
+#[test]
+fn test_vim_backward_motions_leave_autosuggestion_unaccepted() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let editor = add_editor_vim_normal_mode("echo ", &mut app);
+
+        editor.update(&mut app, |view, ctx| {
+            view.set_autosuggestion(
+                "foo bar-baz",
+                AutosuggestionLocation::EndOfBuffer,
+                AutosuggestionType::Command {
+                    was_intelligent_autosuggestion: false,
+                },
+                ctx,
+            );
+            view.vim_user_insert("$", ctx);
+        });
+        editor.update(&mut app, |view, ctx| {
+            view.vim_user_insert("h", ctx);
+        });
+
+        editor.read(&app, |view, ctx| {
+            assert_eq!(view.buffer_text(ctx), "echo ");
+            assert_eq!(view.current_autosuggestion_text(), Some("foo bar-baz"));
+            assert_eq!(
+                view.selected_ranges(ctx),
+                vec![DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3)]
+            );
+        });
+
+        editor.update(&mut app, |view, ctx| {
+            view.vim_user_insert("$", ctx);
+        });
+        editor.update(&mut app, |view, ctx| {
+            view.vim_user_insert("b", ctx);
+        });
+
+        editor.read(&app, |view, ctx| {
+            assert_eq!(view.buffer_text(ctx), "echo ");
+            assert_eq!(view.current_autosuggestion_text(), Some("foo bar-baz"));
+            assert_eq!(
+                view.selected_ranges(ctx),
+                vec![DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)]
             );
         });
     });
