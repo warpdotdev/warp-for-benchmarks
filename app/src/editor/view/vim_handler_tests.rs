@@ -4650,6 +4650,56 @@ fn test_vim_accept_partial_autosuggestions_word() {
 }
 
 #[test]
+fn test_vim_other_motions_do_not_accept_autosuggestions() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let editor = add_editor_vim_normal_mode("echo ", &mut app);
+
+        editor.update(&mut app, |view, ctx| {
+            view.set_autosuggestion(
+                "foo",
+                AutosuggestionLocation::EndOfBuffer,
+                AutosuggestionType::Command {
+                    was_intelligent_autosuggestion: false,
+                },
+                ctx,
+            );
+            view.vim_user_insert("$", ctx);
+        });
+
+        editor.update(&mut app, |view, ctx| {
+            view.vim_user_insert("h", ctx);
+        });
+
+        editor.read(&app, |view, ctx| {
+            assert_eq!(view.buffer_text(ctx), "echo ");
+            assert_eq!(view.current_autosuggestion_text(), Some("foo"));
+            assert_eq!(
+                view.selected_ranges(ctx),
+                vec![DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3)]
+            );
+        });
+
+        editor.update(&mut app, |view, ctx| {
+            view.vim_user_insert("$", ctx);
+        });
+
+        editor.update(&mut app, |view, ctx| {
+            view.vim_user_insert("b", ctx);
+        });
+
+        editor.read(&app, |view, ctx| {
+            assert_eq!(view.buffer_text(ctx), "echo ");
+            assert_eq!(view.current_autosuggestion_text(), Some("foo"));
+            assert_eq!(
+                view.selected_ranges(ctx),
+                vec![DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)]
+            );
+        });
+    });
+}
+
+#[test]
 fn test_vim_operators_on_word_text_objects() {
     App::test((), |mut app| async move {
         initialize_app(&mut app);
