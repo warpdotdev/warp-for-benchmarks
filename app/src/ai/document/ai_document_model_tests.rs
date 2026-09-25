@@ -823,6 +823,38 @@ fn test_streamed_agent_update_matches_reset_with_markdown_for_code_block() {
 }
 
 #[test]
+fn test_streamed_agent_update_can_clear_and_restore_document_content() {
+    App::test((), |mut app| async move {
+        initialize_app_for_ai_document_tests(&mut app);
+        let model_handle = app.add_model(|_ctx| AIDocumentModel::new_for_test());
+        let conversation_id = AIConversationId::new();
+
+        let doc_id = model_handle.update(&mut app, |model, ctx| {
+            model.create_document(
+                "Streaming Test",
+                "# Initial content",
+                conversation_id,
+                None,
+                ctx,
+            )
+        });
+
+        for content in ["", "# Restored content"] {
+            model_handle.update(&mut app, |model, ctx| {
+                model.apply_streamed_agent_update(&doc_id, "Streaming Test", content, ctx);
+            });
+
+            let actual = model_handle.read(&app, |model, ctx| {
+                model
+                    .get_document_content(&doc_id, ctx)
+                    .expect("streaming document should expose its content")
+            });
+            assert_eq!(actual.trim(), content);
+        }
+    });
+}
+
+#[test]
 fn test_plan_markdown_content_preserves_copyable_structure() {
     App::test((), |mut app| async move {
         initialize_app_for_ai_document_tests(&mut app);

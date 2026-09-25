@@ -690,7 +690,11 @@ impl Buffer {
         // Build the new suffix as formatted text. This will replace the old
         // suffix range and effectively delete the old suffix while inserting
         // the new suffix, leaving the prefix untouched.
-        let new_suffix_text = FormattedText::new(delta.new_suffix.clone());
+        let new_suffix_text = if delta.common_prefix_lines == 0 && delta.new_suffix.is_empty() {
+            FormattedText::new([FormattedTextLine::Line(Vec::new())])
+        } else {
+            FormattedText::new(delta.new_suffix.clone())
+        };
         let edit_result = self.replace_with_formatted_text(
             suffix_range,
             new_suffix_text,
