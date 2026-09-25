@@ -31,9 +31,10 @@ use vim::vim::{
     MotionType, TextObjectInclusion, TextObjectType, VimOperator, WordBound, WordMotion,
 };
 use vim::{
-    find_next_paragraph_end, find_previous_paragraph_start, vim_a_block, vim_a_paragraph,
-    vim_a_quote, vim_a_word, vim_find_char_on_line, vim_find_matching_bracket, vim_inner_block,
-    vim_inner_paragraph, vim_inner_quote, vim_inner_word, vim_word_iterator_from_offset,
+    VimMotionTarget, find_next_paragraph_end, find_previous_paragraph_start, vim_a_block,
+    vim_a_paragraph, vim_a_quote, vim_a_word, vim_find_char_on_line, vim_find_matching_bracket,
+    vim_inner_block, vim_inner_paragraph, vim_inner_quote, vim_inner_word,
+    vim_word_iterator_from_offset,
 };
 use warp_errors::report_error;
 use warpui::accessibility::{AccessibilityContent, WarpA11yRole};
@@ -464,6 +465,122 @@ pub enum EditorModelEvent {
 
 impl Entity for EditorModel {
     type Event = EditorModelEvent;
+}
+
+impl VimMotionTarget for EditorModel {
+    fn vim_motion_chars(
+        &mut self,
+        count: u32,
+        direction: Direction,
+        wrap_lines: bool,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        if wrap_lines {
+            self.move_cursor_ignoring_newlines(count, &direction, false, ctx);
+        } else {
+            self.move_cursors_by_offset(count, &direction, false, true, ctx);
+        }
+    }
+
+    fn vim_motion_lines(&mut self, count: u32, direction: Direction, ctx: &mut ModelContext<Self>) {
+        match direction {
+            Direction::Backward => self.move_up_by_offset(count, ctx),
+            Direction::Forward => self.move_down_by_offset(count, ctx),
+        }
+    }
+
+    fn vim_motion_line_start(&mut self, ctx: &mut ModelContext<Self>) {
+        self.cursor_line_start(false, ctx);
+    }
+
+    fn vim_motion_line_end(&mut self, ctx: &mut ModelContext<Self>) {
+        self.cursor_line_end(false, ctx);
+    }
+
+    fn vim_motion_first_nonwhitespace(&mut self, ctx: &mut ModelContext<Self>) {
+        self.cursor_line_start_non_whitespace(false, ctx);
+    }
+
+    fn vim_motion_words(&mut self, count: u32, motion: &WordMotion, ctx: &mut ModelContext<Self>) {
+        let buffer = self.buffer(ctx);
+        let mut new_selections = self.selections(ctx).clone();
+        for selection in new_selections.iter_mut() {
+            let Ok(end_offset) = selection.end().to_char_offset(buffer) else {
+                continue;
+            };
+
+            let Ok(boundaries) = vim_word_iterator_from_offset(
+                end_offset,
+                buffer,
+                motion.direction,
+                motion.bound,
+                motion.word_type,
+            ) else {
+                continue;
+            };
+
+            let bias = match motion.direction {
+                Direction::Backward => AnchorBias::Left,
+                Direction::Forward => AnchorBias::Right,
+            };
+            let cursor = buffer
+                .anchor_at(
+                    boundaries.take(count as usize).last().unwrap_or(end_offset),
+                    bias,
+                )
+                .unwrap_or_else(|_| selection.end().clone());
+
+            selection.set_selection(Selection::single_cursor(cursor));
+            selection.goal_start_column = None;
+            selection.goal_end_column = None;
+        }
+        self.change_selections(new_selections, ctx);
+    }
+
+    fn vim_motion_find_char(
+        &mut self,
+        count: u32,
+        motion: &FindCharMotion,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        self.vim_find_char(false, count, motion, ctx);
+    }
+
+    fn vim_motion_paragraphs(
+        &mut self,
+        count: u32,
+        direction: Direction,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        self.vim_move_by_paragraph(count, &direction, false, ctx);
+    }
+
+    fn vim_motion_first_line(&mut self, ctx: &mut ModelContext<Self>) {
+        self.reset_selections_to_point(&Point::new(0, 0), ctx);
+    }
+
+    fn vim_motion_last_line(&mut self, ctx: &mut ModelContext<Self>) {
+        self.move_to_buffer_end(false, ctx);
+        self.cursor_line_start(false, ctx);
+    }
+
+    fn vim_motion_line_number(&mut self, line_number: u32, ctx: &mut ModelContext<Self>) {
+        let max_row = self.buffer(ctx).max_point().row;
+        let row = line_number.saturating_sub(1).min(max_row);
+        self.reset_selections_to_point(&Point::new(row, 0), ctx);
+    }
+
+    fn vim_motion_matching_bracket(&mut self, ctx: &mut ModelContext<Self>) {
+        self.vim_move_cursor_to_matching_bracket(false, ctx);
+    }
+
+    fn vim_motion_unmatched_bracket(
+        &mut self,
+        bracket: &BracketChar,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        self.vim_move_cursor_to_unmatched_bracket(bracket, false, ctx);
+    }
 }
 
 /// The public interface.
