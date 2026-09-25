@@ -15,6 +15,7 @@ use warpui::{SingletonEntity, ViewContext};
 use super::{CodeEditorEvent, CodeEditorView};
 use crate::code::editor::find::view::Event as FindViewEvent;
 use crate::code::editor::model::{CaseTransform, CodeEditorModel, LineBound};
+use crate::editor::VimNavigationModel;
 use crate::view_components::find::FindDirection;
 use crate::vim_registers::{RegisterContent, VimRegisters};
 
@@ -33,56 +34,20 @@ impl VimHandler for CodeEditorView {
         character_motion: &CharacterMotion,
         ctx: &mut ViewContext<Self>,
     ) {
-        self.model.update(ctx, |model, ctx| match character_motion {
-            CharacterMotion::Right => {
-                model.vim_move_horizontal_by_offset(count, &Direction::Forward, false, true, ctx);
-            }
-            CharacterMotion::Up => {
-                model.vim_move_vertical_by_offset(count, TextDirection::Backwards, false, ctx);
-            }
-            CharacterMotion::Down => {
-                model.vim_move_vertical_by_offset(count, TextDirection::Forwards, false, ctx);
-            }
-            CharacterMotion::Left => {
-                model.vim_move_horizontal_by_offset(count, &Direction::Backward, false, true, ctx);
-            }
-            CharacterMotion::WrappingLeft => {
-                model.vim_move_horizontal_by_offset(count, &Direction::Backward, false, false, ctx);
-            }
-            CharacterMotion::WrappingRight => {
-                model.vim_move_horizontal_by_offset(count, &Direction::Forward, false, false, ctx);
-            }
+        self.model.update(ctx, |model, ctx| {
+            model.navigate_char(count, character_motion, ctx)
         });
     }
 
     fn navigate_word(&mut self, count: u32, word_motion: &WordMotion, ctx: &mut ViewContext<Self>) {
-        let WordMotion {
-            direction,
-            bound,
-            word_type,
-        } = word_motion;
-
         self.model.update(ctx, |model, ctx| {
-            model.vim_navigate_word(*direction, *bound, *word_type, count, ctx);
+            model.move_word(count, word_motion, ctx);
         });
     }
 
     fn navigate_line(&mut self, line_count: u32, motion: &LineMotion, ctx: &mut ViewContext<Self>) {
         self.model.update(ctx, |model, ctx| {
-            match motion {
-                LineMotion::Start => model.vim_move_to_line_bound(LineBound::Start, false, ctx),
-                LineMotion::FirstNonWhitespace => model.vim_move_to_first_nonwhitespace(false, ctx),
-                LineMotion::End => {
-                    // Only moving to the end of the line ($) uses number-repeat (the line-count var)
-                    model.vim_move_vertical_by_offset(
-                        line_count.saturating_sub(1),
-                        TextDirection::Forwards,
-                        false,
-                        ctx,
-                    );
-                    model.vim_move_to_line_bound(LineBound::End, false, ctx);
-                }
-            }
+            model.navigate_line(line_count, motion, ctx);
         })
     }
 
@@ -93,22 +58,7 @@ impl VimHandler for CodeEditorView {
         ctx: &mut ViewContext<Self>,
     ) {
         self.model.update(ctx, |model, ctx| {
-            match motion {
-                FirstNonWhitespaceMotion::Up => {
-                    model.vim_move_vertical_by_offset(count, TextDirection::Backwards, false, ctx);
-                }
-                FirstNonWhitespaceMotion::Down => {
-                    model.vim_move_vertical_by_offset(count, TextDirection::Forwards, false, ctx)
-                }
-                FirstNonWhitespaceMotion::DownMinusOne => model.vim_move_vertical_by_offset(
-                    count - 1,
-                    TextDirection::Forwards,
-                    false,
-                    ctx,
-                ),
-            }
-
-            model.vim_move_to_first_nonwhitespace(false, ctx);
+            model.navigate_first_nonwhitespace(count, motion, ctx);
         })
     }
 
@@ -119,12 +69,7 @@ impl VimHandler for CodeEditorView {
         ctx: &mut ViewContext<Self>,
     ) {
         self.model.update(ctx, |model, ctx| {
-            model.vim_find_char(
-                false, /* keep_selection */
-                occurrence_count,
-                find_char_motion,
-                ctx,
-            );
+            model.find_char(occurrence_count, find_char_motion, ctx);
         });
     }
 
@@ -135,7 +80,7 @@ impl VimHandler for CodeEditorView {
         ctx: &mut ViewContext<Self>,
     ) {
         self.model.update(ctx, |model, ctx| {
-            model.vim_move_by_paragraph(count, direction, false, ctx);
+            model.move_paragraph(count, direction, ctx);
         });
     }
 
@@ -691,34 +636,31 @@ impl VimHandler for CodeEditorView {
 
     fn jump_to_first_line(&mut self, ctx: &mut ViewContext<Self>) {
         self.model.update(ctx, |model, ctx| {
-            model.jump_to_line_column(0, None, ctx);
+            model.jump_first_line(None, ctx);
         });
     }
 
     fn jump_to_last_line(&mut self, ctx: &mut ViewContext<Self>) {
         self.model.update(ctx, |model, ctx| {
-            model.vim_move_to_last_line(ctx);
+            model.jump_last_line(ctx);
         });
     }
 
     fn jump_to_line(&mut self, line_number: u32, ctx: &mut ViewContext<Self>) {
         self.model.update(ctx, |model, ctx| {
-            let buffer = model.content().as_ref(ctx);
-            let max_row = buffer.max_point().row;
-            let row = line_number.max(1).min(max_row);
-            model.jump_to_line_column(row as usize, None, ctx);
+            model.jump_line(line_number, None, ctx);
         });
     }
 
     fn jump_to_matching_bracket(&mut self, ctx: &mut ViewContext<Self>) {
         self.model.update(ctx, |model, ctx| {
-            model.vim_jump_to_matching_bracket(false, ctx);
+            model.jump_matching_bracket(ctx);
         })
     }
 
     fn jump_to_unmatched_bracket(&mut self, bracket: &BracketChar, ctx: &mut ViewContext<Self>) {
         self.model.update(ctx, |model, ctx| {
-            model.vim_jump_to_unmatched_bracket(bracket, false, ctx);
+            model.jump_unmatched_bracket(bracket, ctx);
         })
     }
 
