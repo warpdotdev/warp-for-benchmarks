@@ -14,4 +14,10 @@ pub use word_iterator::vim_word_iterator_from_offset;
 mod find_char;
 pub use find_char::vim_find_char_on_line;
 
+mod navigation;
+pub use navigation::{
+    VimCursorModel, VimTextBuffer, vim_find_char_destination, vim_line_bounded_destination,
+    vim_matching_bracket_destination, vim_navigate, vim_paragraph_destination,
+};
+
 pub mod vim;
