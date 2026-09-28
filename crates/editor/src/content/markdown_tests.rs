@@ -4,11 +4,12 @@ use markdown_parser::{compute_formatted_text_delta, parse_markdown};
 use serde_yaml::Value;
 use string_offset::CharOffset;
 use vec1::Vec1;
-use warpui_core::{App, ReadModel};
+use warpui_core::{App, ModelHandle, ReadModel};
 
 use super::MarkdownStyle;
 use crate::content::buffer::tests::TestEmbeddedItem;
 use crate::content::buffer::{Buffer, BufferEditAction, EditOrigin, StyledBlockBoundaryBehavior};
+use crate::content::selection_model::BufferSelectionModel;
 use crate::content::text::{IndentBehavior, TABLE_BLOCK_MARKDOWN_LANG};
 
 #[test]
@@ -257,6 +258,52 @@ fn test_apply_formatted_text_delta_append() {
         // We add a trailing newline
         assert_eq!(exported.trim_end(), new_markdown_2);
         assert_eq!(new_formatted_2, formatted_in_buffer);
+    });
+}
+
+fn apply_new_markdown_delta(
+    buffer: &ModelHandle<Buffer>,
+    selection: &ModelHandle<BufferSelectionModel>,
+    new_markdown: &str,
+    app: &mut App,
+) {
+    let old_formatted = app.read_model(buffer, |buffer, _| {
+        buffer.range_to_formatted_text(
+            CharOffset::from(1)..buffer.max_charoffset(),
+            StyledBlockBoundaryBehavior::Inclusive,
+        )
+    });
+    let new_formatted = parse_markdown(new_markdown).unwrap();
+    let delta = compute_formatted_text_delta(old_formatted, new_formatted);
+    buffer.update(app, |buffer, ctx| {
+        buffer.apply_formatted_text_delta(&delta, selection.clone(), ctx);
+    });
+}
+
+/// A streamed document update can momentarily clear all content. The delta for that update must
+/// leave a valid buffer (empty buffers are invalid) so selection handling can keep reading it, and
+/// a later update must restore content correctly.
+#[test]
+fn test_apply_formatted_text_delta_clearing_all_content() {
+    App::test((), |mut app| async move {
+        for initial_markdown in ["hello world\n", "# A heading\n", "- a\n- b\n"] {
+            let (buffer, selection) = Buffer::mock_from_markdown(
+                initial_markdown,
+                None,
+                Box::new(|_, _| IndentBehavior::Ignore),
+                &mut app,
+            );
+
+            apply_new_markdown_delta(&buffer, &selection, "", &mut app);
+
+            let cleared = app.read_model(&buffer, |buffer, _| buffer.markdown_unescaped());
+            assert_eq!(cleared, "");
+
+            apply_new_markdown_delta(&buffer, &selection, "restored text\n", &mut app);
+
+            let restored = app.read_model(&buffer, |buffer, _| buffer.markdown_unescaped());
+            assert_eq!(restored.trim_end(), "restored text");
+        }
     });
 }
 
