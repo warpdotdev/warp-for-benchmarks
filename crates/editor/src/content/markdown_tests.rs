@@ -9,7 +9,9 @@ use warpui_core::{App, ReadModel};
 use super::MarkdownStyle;
 use crate::content::buffer::tests::TestEmbeddedItem;
 use crate::content::buffer::{Buffer, BufferEditAction, EditOrigin, StyledBlockBoundaryBehavior};
-use crate::content::text::{IndentBehavior, TABLE_BLOCK_MARKDOWN_LANG};
+use crate::content::text::{
+    BlockType, BufferBlockStyle, IndentBehavior, TABLE_BLOCK_MARKDOWN_LANG,
+};
 
 #[test]
 fn test_export_normalizes_code_languages() {
@@ -498,4 +500,64 @@ fn test_image_with_content_html_serialization() {
         assert!(html.contains("src=\"test.png\""));
         assert!(html.contains("Some text"));
     });
+}
+
+/// A streamed notebook/plan update can momentarily parse to an empty document, replacing all
+/// formatted content. The buffer must retain a plain-text marker so later selection handling does
+/// not read an invalid empty buffer, and it must recover when streaming resumes.
+#[test]
+fn test_apply_formatted_text_delta_clears_to_valid_empty_buffer() {
+    for old_markdown in ["hello world", "# a heading"] {
+        App::test((), |mut app| async move {
+            let (buffer, selection) = Buffer::mock_from_markdown(
+                old_markdown,
+                None,
+                Box::new(|_, _| IndentBehavior::Ignore),
+                &mut app,
+            );
+
+            let old_formatted = app.read_model(&buffer, |buffer, _| {
+                buffer.range_to_formatted_text(
+                    CharOffset::from(1)..buffer.max_charoffset(),
+                    StyledBlockBoundaryBehavior::Exclusive,
+                )
+            });
+
+            let empty_delta =
+                compute_formatted_text_delta(old_formatted, parse_markdown("").unwrap());
+            buffer.update(&mut app, |buffer, ctx| {
+                buffer.apply_formatted_text_delta(&empty_delta, selection.clone(), ctx);
+            });
+
+            // Reading formatted text drives the selection handling that panicked on an empty
+            // buffer, so a successful read confirms the buffer stayed valid.
+            let (exported, cleared_formatted, block_type) = app.read_model(&buffer, |buffer, _| {
+                let formatted = buffer.range_to_formatted_text(
+                    CharOffset::from(1)..buffer.max_charoffset(),
+                    StyledBlockBoundaryBehavior::Exclusive,
+                );
+                (
+                    buffer.markdown_unescaped(),
+                    formatted,
+                    buffer.block_type_at_point(CharOffset::zero()),
+                )
+            });
+            assert_eq!(exported, "");
+            assert_eq!(
+                block_type,
+                BlockType::Text(BufferBlockStyle::PlainText),
+                "emptied buffer should reset to a plain-text marker"
+            );
+
+            // Streaming resumes: the next chunk repopulates the document.
+            let refilled = "## resumed heading";
+            let refill_delta =
+                compute_formatted_text_delta(cleared_formatted, parse_markdown(refilled).unwrap());
+            buffer.update(&mut app, |buffer, ctx| {
+                buffer.apply_formatted_text_delta(&refill_delta, selection.clone(), ctx);
+            });
+            let exported = app.read_model(&buffer, |buffer, _| buffer.markdown_unescaped());
+            assert_eq!(exported.trim_end(), refilled);
+        });
+    }
 }
