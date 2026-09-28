@@ -261,6 +261,49 @@ fn test_apply_formatted_text_delta_append() {
 }
 
 #[test]
+fn test_apply_formatted_text_delta_preserves_empty_buffer_marker() {
+    App::test((), |mut app| async move {
+        let (buffer, selection) = Buffer::mock_from_markdown(
+            "initial content",
+            None,
+            Box::new(|_, _| IndentBehavior::Ignore),
+            &mut app,
+        );
+
+        let old_formatted = app.read_model(&buffer, |buffer, _| {
+            buffer.range_to_formatted_text(
+                CharOffset::from(1)..buffer.max_charoffset(),
+                StyledBlockBoundaryBehavior::Inclusive,
+            )
+        });
+        let empty_formatted = parse_markdown("").unwrap();
+        let empty_delta = compute_formatted_text_delta(old_formatted, empty_formatted.clone());
+
+        buffer.update(&mut app, |buffer, ctx| {
+            buffer.apply_formatted_text_delta(&empty_delta, selection.clone(), ctx);
+        });
+
+        let replacement_formatted = parse_markdown("replacement content").unwrap();
+        let replacement_delta =
+            compute_formatted_text_delta(empty_formatted, replacement_formatted.clone());
+        buffer.update(&mut app, |buffer, ctx| {
+            buffer.apply_formatted_text_delta(&replacement_delta, selection.clone(), ctx);
+        });
+
+        app.read_model(&buffer, |buffer, _| {
+            assert_eq!(buffer.markdown_unescaped().trim(), "replacement content");
+            assert_eq!(
+                buffer.range_to_formatted_text(
+                    CharOffset::from(1)..buffer.max_charoffset(),
+                    StyledBlockBoundaryBehavior::Inclusive,
+                ),
+                replacement_formatted
+            );
+        });
+    });
+}
+
+#[test]
 fn test_image_html_serialization() {
     App::test((), |mut app| async move {
         let markdown = "![Alt text](image.png)\n";
