@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use markdown_parser::{compute_formatted_text_delta, parse_markdown};
+use markdown_parser::{FormattedText, compute_formatted_text_delta, parse_markdown};
 use serde_yaml::Value;
 use string_offset::CharOffset;
 use vec1::Vec1;
@@ -257,6 +257,53 @@ fn test_apply_formatted_text_delta_append() {
         // We add a trailing newline
         assert_eq!(exported.trim_end(), new_markdown_2);
         assert_eq!(new_formatted_2, formatted_in_buffer);
+    });
+}
+
+#[test]
+fn test_apply_formatted_text_delta_empty_then_replace() {
+    App::test((), |mut app| async move {
+        let (buffer, selection) = Buffer::mock_from_markdown(
+            "# Initial plan",
+            None,
+            Box::new(|_, _| IndentBehavior::Ignore),
+            &mut app,
+        );
+
+        let old_formatted = parse_markdown("# Initial plan").unwrap();
+        let empty_formatted = FormattedText::new([]);
+        let empty_delta = compute_formatted_text_delta(old_formatted, empty_formatted.clone());
+        buffer.update(&mut app, |buffer, ctx| {
+            buffer.apply_formatted_text_delta(&empty_delta, selection.clone(), ctx);
+        });
+
+        let (empty_markdown, formatted_in_buffer) = app.read_model(&buffer, |buffer, _| {
+            let formatted = buffer.range_to_formatted_text(
+                CharOffset::from(1)..buffer.max_charoffset(),
+                StyledBlockBoundaryBehavior::Exclusive,
+            );
+            (buffer.markdown_unescaped(), formatted)
+        });
+        assert_eq!(empty_markdown, "");
+        assert_eq!(formatted_in_buffer, empty_formatted);
+
+        let replacement_markdown = "Updated plan";
+        let replacement_formatted = parse_markdown(replacement_markdown).unwrap();
+        let replacement_delta =
+            compute_formatted_text_delta(empty_formatted, replacement_formatted.clone());
+        buffer.update(&mut app, |buffer, ctx| {
+            buffer.apply_formatted_text_delta(&replacement_delta, selection.clone(), ctx);
+        });
+
+        let (markdown, formatted_in_buffer) = app.read_model(&buffer, |buffer, _| {
+            let formatted = buffer.range_to_formatted_text(
+                CharOffset::from(1)..buffer.max_charoffset(),
+                StyledBlockBoundaryBehavior::Exclusive,
+            );
+            (buffer.markdown_unescaped(), formatted)
+        });
+        assert_eq!(markdown, replacement_markdown);
+        assert_eq!(formatted_in_buffer, replacement_formatted);
     });
 }
 
