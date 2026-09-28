@@ -634,6 +634,22 @@ impl Buffer {
             }
         }
 
+        // Clearing the whole document (e.g. a streamed update momentarily replacing all content)
+        // deletes every line but keeps the leading block marker the buffer requires. Reset that
+        // marker to plain text so the emptied buffer doesn't retain a stale block style such as a
+        // heading. Non-empty replacements bring their own leading marker, so this only applies when
+        // the replacement text is empty.
+        if is_full_buffer_replacement
+            && text.lines.is_empty()
+            && let BlockType::Text(active_block_style) = self.block_type_at_point(range.start)
+            && active_block_style != BufferBlockStyle::PlainText
+        {
+            editor_action_set.push(CoreEditorAction::new(
+                range.clone(),
+                CoreEditorActionType::StyleBlock(BufferBlockStyle::PlainText),
+            ));
+        }
+
         editor_action_set.push(CoreEditorAction::new(
             range.clone(),
             CoreEditorActionType::Insert {
@@ -666,7 +682,10 @@ impl Buffer {
         // By default the buffer has an empty plain text. If we don't replace the initial marker and we're inserting
         // a different formatted text line at the beginning, we will end up with an incorrect initial line.
         // If we're replacing the whole content, include the zeroth offset so we set the initial block styling correctly.
-        if suffix_start == CharOffset::from(1) {
+        // When the replacement is empty there is no first line to set that styling, and deleting the zeroth offset
+        // would remove the leading block marker the buffer requires, leaving an invalid empty buffer. Keep the marker
+        // in that case so selection handling still sees a well-formed buffer.
+        if suffix_start == CharOffset::from(1) && !delta.new_suffix.is_empty() {
             suffix_start = CharOffset::zero();
         }
         suffix_start = suffix_start.clamp(CharOffset::zero(), self.max_charoffset());

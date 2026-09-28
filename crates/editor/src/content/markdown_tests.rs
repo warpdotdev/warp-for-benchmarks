@@ -499,3 +499,49 @@ fn test_image_with_content_html_serialization() {
         assert!(html.contains("Some text"));
     });
 }
+
+#[test]
+fn test_apply_formatted_text_delta_clears_to_valid_plain_text_buffer() {
+    App::test((), |mut app| async move {
+        let (buffer, selection) = Buffer::mock_from_markdown(
+            "# Heading\nsome content\n",
+            None,
+            Box::new(|_, _| IndentBehavior::Ignore),
+            &mut app,
+        );
+
+        let read_formatted = |app: &mut App| {
+            app.read_model(&buffer, |buffer, _| {
+                buffer.range_to_formatted_text(
+                    CharOffset::from(1)..buffer.max_charoffset(),
+                    StyledBlockBoundaryBehavior::Exclusive,
+                )
+            })
+        };
+
+        // A streamed update can momentarily replace all formatted content with nothing.
+        let clear_delta =
+            compute_formatted_text_delta(read_formatted(&mut app), parse_markdown("").unwrap());
+        assert_eq!(clear_delta.common_prefix_lines, 0);
+        assert!(clear_delta.new_suffix.is_empty());
+        buffer.update(&mut app, |buffer, ctx| {
+            buffer.apply_formatted_text_delta(&clear_delta, selection.clone(), ctx);
+        });
+
+        // The emptied buffer must stay valid: an empty, plain-text buffer with no stale heading
+        // marker left over from the previous content.
+        let cleared = app.read_model(&buffer, |buffer, _| buffer.markdown_unescaped());
+        assert_eq!(cleared, "");
+
+        // A subsequent streamed update with real content still restores the buffer correctly.
+        let restore_delta = compute_formatted_text_delta(
+            read_formatted(&mut app),
+            parse_markdown("restored content\n").unwrap(),
+        );
+        buffer.update(&mut app, |buffer, ctx| {
+            buffer.apply_formatted_text_delta(&restore_delta, selection.clone(), ctx);
+        });
+        let restored = app.read_model(&buffer, |buffer, _| buffer.markdown_unescaped());
+        assert_eq!(restored, "restored content");
+    });
+}
