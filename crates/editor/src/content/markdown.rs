@@ -687,10 +687,15 @@ impl Buffer {
         let suffix_range = self.formatted_text_suffix_range(delta);
         let selection_model_id = selection_model.id();
 
-        // Build the new suffix as formatted text. This will replace the old
-        // suffix range and effectively delete the old suffix while inserting
-        // the new suffix, leaving the prefix untouched.
-        let new_suffix_text = FormattedText::new(delta.new_suffix.clone());
+        // A mid-stream update can momentarily clear the whole document. Replacing the buffer with
+        // truly empty formatted text would drop its leading block marker and leave an invalid empty
+        // buffer that selection handling cannot read, so insert a single empty plain-text line
+        // instead. This mirrors the leading marker of a freshly constructed empty buffer.
+        let new_suffix_text = if delta.common_prefix_lines == 0 && delta.new_suffix.is_empty() {
+            FormattedText::new(vec![FormattedTextLine::Line(vec![])])
+        } else {
+            FormattedText::new(delta.new_suffix.clone())
+        };
         let edit_result = self.replace_with_formatted_text(
             suffix_range,
             new_suffix_text,
