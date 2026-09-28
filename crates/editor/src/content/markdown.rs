@@ -634,6 +634,19 @@ impl Buffer {
             }
         }
 
+        // Clearing the whole document leaves only its initial marker. Reset that marker to plain
+        // text so an emptied buffer matches a default empty buffer instead of retaining the old
+        // block style (e.g. a stray empty heading).
+        if is_full_buffer_replacement
+            && text.lines.is_empty()
+            && self.block_type_at_point(range.start) != BlockType::Text(BufferBlockStyle::PlainText)
+        {
+            editor_action_set.push(CoreEditorAction::new(
+                range.clone(),
+                CoreEditorActionType::StyleBlock(BufferBlockStyle::PlainText),
+            ));
+        }
+
         editor_action_set.push(CoreEditorAction::new(
             range.clone(),
             CoreEditorActionType::Insert {
@@ -666,7 +679,9 @@ impl Buffer {
         // By default the buffer has an empty plain text. If we don't replace the initial marker and we're inserting
         // a different formatted text line at the beginning, we will end up with an incorrect initial line.
         // If we're replacing the whole content, include the zeroth offset so we set the initial block styling correctly.
-        if suffix_start == CharOffset::from(1) {
+        // When the new suffix is empty, keep the initial marker so the buffer retains a block marker: replacing it
+        // with empty text would leave an invalid empty buffer that panics later selection handling.
+        if suffix_start == CharOffset::from(1) && !delta.new_suffix.is_empty() {
             suffix_start = CharOffset::zero();
         }
         suffix_start = suffix_start.clamp(CharOffset::zero(), self.max_charoffset());
