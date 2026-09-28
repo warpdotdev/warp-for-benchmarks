@@ -586,9 +586,11 @@ end
 function warp_run_external_ctrl_r_widget
   set -l result ""
   switch "$_WARP_EXTERNAL_CTRL_R_WIDGET"
-    case 'fzf-history-widget'
+    case 'fzf-history-widget' '_fzf_search_history'
+      # junegunn/fzf.fish and PatrickF1/fzf.fish both replace the command line with the picked
+      # entry, so invoke whichever was tagged and read the result back the same way.
       test -z "$fish_private_mode"; and builtin history merge
-      fzf-history-widget
+      $_WARP_EXTERNAL_CTRL_R_WIDGET
       set result (commandline | string collect)
       commandline -r ''
     case '_atuin_search'
@@ -676,9 +678,14 @@ function warp_bootstrapped
   set -g _WARP_EXTERNAL_CTRL_R_WIDGET ""
   set -l warp_ctrl_r_widget (warp_external_ctrl_r_widget)
   switch "$warp_ctrl_r_widget"
-    case 'fzf-history-widget' '_atuin_search'
-      set -g _WARP_EXTERNAL_CTRL_R_WIDGET "$warp_ctrl_r_widget"
-      set -a shell_plugins external_ctrl_r_history
+    case 'fzf-history-widget' '_atuin_search' '_fzf_search_history'
+      # A ^R binding can name a widget whose function is absent (e.g. the plugin defines the
+      # binding but its function isn't loaded yet); tagging it would hand ^R to a command that
+      # can't run, so only claim the handoff when the function exists, as the ^T path does below.
+      if functions -q "$warp_ctrl_r_widget"
+        set -g _WARP_EXTERNAL_CTRL_R_WIDGET "$warp_ctrl_r_widget"
+        set -a shell_plugins external_ctrl_r_history
+      end
   end
 
   set -g _WARP_EXTERNAL_CTRL_T_WIDGET ""
