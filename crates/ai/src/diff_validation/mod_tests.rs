@@ -598,6 +598,52 @@ fn test_v4a_add_line_at_start_of_file() {
 }
 
 #[test]
+fn test_v4a_delete_single_blank_line() {
+    let hunks = vec![V4AHunk {
+        change_context: vec![],
+        pre_context: "context before".to_string(),
+        old: "\n".to_string(),
+        new: String::new(),
+        post_context: "context after".to_string(),
+    }];
+
+    let file_content = "context before\n\ncontext after";
+    let diff = fuzzy_match_v4a_diffs("example.go", &hunks, None, file_content);
+
+    assert!(diff.failures.is_none());
+    assert_eq!(
+        deltas(&diff),
+        &[DiffDelta {
+            replacement_line_range: 2..3,
+            insertion: String::new(),
+        }]
+    );
+}
+
+#[test]
+fn test_v4a_add_single_blank_line() {
+    let hunks = vec![V4AHunk {
+        change_context: vec![],
+        pre_context: "context before".to_string(),
+        old: String::new(),
+        new: "\n".to_string(),
+        post_context: "context after".to_string(),
+    }];
+
+    let file_content = "context before\ncontext after";
+    let diff = fuzzy_match_v4a_diffs("example.go", &hunks, None, file_content);
+
+    assert!(diff.failures.is_none());
+    assert_eq!(
+        deltas(&diff),
+        &[DiffDelta {
+            replacement_line_range: 2..2,
+            insertion: "\n".to_string(),
+        }]
+    );
+}
+
+#[test]
 fn test_v4a_add_line_at_end_of_file() {
     // Test adding a line at the very end of a file
     let hunks = vec![V4AHunk {
