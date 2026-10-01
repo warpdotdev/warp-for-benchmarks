@@ -460,6 +460,52 @@ fn test_v4a_failure_preserves_original_block_ordinal() {
 }
 
 #[test]
+fn test_v4a_remove_blank_line() {
+    let hunks = vec![V4AHunk {
+        change_context: vec![],
+        pre_context: "before".to_string(),
+        old: "\n".to_string(),
+        new: String::new(),
+        post_context: "after".to_string(),
+    }];
+
+    let file_content = "before\n\nafter";
+    let diff = fuzzy_match_v4a_diffs("test.txt", &hunks, None, file_content);
+
+    assert!(diff.failures.is_none());
+    assert_eq!(
+        deltas(&diff),
+        &[DiffDelta {
+            replacement_line_range: 2..3,
+            insertion: String::new(),
+        }]
+    );
+}
+
+#[test]
+fn test_v4a_add_blank_line() {
+    let hunks = vec![V4AHunk {
+        change_context: vec![],
+        pre_context: "before".to_string(),
+        old: String::new(),
+        new: "\n".to_string(),
+        post_context: "after".to_string(),
+    }];
+
+    let file_content = "before\nafter";
+    let diff = fuzzy_match_v4a_diffs("test.txt", &hunks, None, file_content);
+
+    assert!(diff.failures.is_none());
+    assert_eq!(
+        deltas(&diff),
+        &[DiffDelta {
+            replacement_line_range: 2..2,
+            insertion: "\n".to_string(),
+        }]
+    );
+}
+
+#[test]
 fn test_v4a_noop_diff() {
     let hunks = vec![V4AHunk {
         change_context: vec![],

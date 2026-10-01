@@ -421,9 +421,11 @@ pub fn fuzzy_match_v4a_diffs(
 
         match match_range {
             Some(range) => {
-                // Check if the replacement is identical to what's already there
-                let matched_content = file_lines[range.start - 1..range.end - 1].join("\n");
-                if diff.new == matched_content {
+                // A joined blank line is "", the same string as a pure deletion, so compare
+                // split lines. Otherwise removing one blank line is dropped as a no-op.
+                let matched_lines = &file_lines[range.start - 1..range.end - 1];
+                let new_lines: Vec<&str> = diff.new.lines().collect();
+                if matched_lines == new_lines.as_slice() {
                     log::info!(
                         "Ignoring V4A diff where new content is identical to matched file content"
                     );
