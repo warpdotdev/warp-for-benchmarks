@@ -76,6 +76,13 @@ pub async fn generate_multi_agent_output(
     if let Some(team_uid) = team_uid {
         request_builder = request_builder.header(TEAM_UID_HEADER, team_uid);
     }
+    if request
+        .settings
+        .as_ref()
+        .is_some_and(|settings| settings.supports_v4a_file_diffs)
+    {
+        request_builder = request_builder.header("X-Warp-Supports-V4A-Blank-Line-Diffs", "true");
+    }
 
     let raw_stream = client.wrap_eventsource_with_iap_detection(request_builder.eventsource());
     let output_stream = raw_stream.filter_map(|event| async {

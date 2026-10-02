@@ -422,8 +422,8 @@ pub fn fuzzy_match_v4a_diffs(
         match match_range {
             Some(range) => {
                 // Check if the replacement is identical to what's already there
-                let matched_content = file_lines[range.start - 1..range.end - 1].join("\n");
-                if diff.new == matched_content {
+                let matched_lines = &file_lines[range.start - 1..range.end - 1];
+                if diff.new.lines().eq(matched_lines.iter().copied()) {
                     log::info!(
                         "Ignoring V4A diff where new content is identical to matched file content"
                     );
@@ -1203,13 +1203,17 @@ fn find_v4a_match(edit: &V4AHunk, file_lines: &[&str]) -> Option<Range<usize>> {
     }
 
     // Combine all three sections into a single search text for the scorers
-    let combined_search = [
+    let combined_lines = [
         pre_context_lines.as_slice(),
         old_lines.as_slice(),
         post_context_lines.as_slice(),
     ]
-    .concat()
-    .join("\n");
+    .concat();
+    let mut combined_search = combined_lines.join("\n");
+    // A final blank needs a terminator so the search window includes every removed line.
+    if combined_lines.last() == Some(&"") {
+        combined_search.push('\n');
+    }
 
     // Try exact match first
     if let Some(range) = match_diff(
@@ -1242,8 +1246,17 @@ fn find_v4a_match(edit: &V4AHunk, file_lines: &[&str]) -> Option<Range<usize>> {
         SECTION_MATCH_THRESHOLD,
         MakeJaroWinklerMatch,
     ) {
+        let old_range = calculate_old_range(search_start, range, &pre_context_lines, &old_lines)?;
+        // Fuzzy context must not turn a blank-only removal into a deletion of code.
+        if old_lines.iter().all(|line| line.is_empty())
+            && file_lines[old_range.start - 1..old_range.end - 1]
+                .iter()
+                .any(|line| !line.trim().is_empty())
+        {
+            return None;
+        }
         log::debug!("V4A match found using JaroWinkler fuzzy matching");
-        return calculate_old_range(search_start, range, &pre_context_lines, &old_lines);
+        return Some(old_range);
     }
 
     None

@@ -9,6 +9,18 @@ fn deltas(diff: &AIRequestedCodeDiff) -> &[DiffDelta] {
     }
 }
 
+fn apply_blank_line_deltas(file_content: &str, diff: &AIRequestedCodeDiff) -> String {
+    let line_offsets: Vec<_> = std::iter::once(0)
+        .chain(file_content.match_indices('\n').map(|(index, _)| index + 1))
+        .collect();
+    let mut result = file_content.to_string();
+    for delta in deltas(diff).iter().rev() {
+        let start = line_offsets[delta.replacement_line_range.start - 1];
+        let end = line_offsets[delta.replacement_line_range.end - 1];
+        result.replace_range(start..end, &delta.insertion);
+    }
+    result
+}
 const CONTENT: &str = "I'd just like to interject
                         for a moment. What you're refering to as
                         Linux, is in fact, GNU/Linux, or as I've
@@ -339,6 +351,186 @@ fn test_v4a_exact_match() {
     );
 }
 
+#[test]
+fn test_v4a_separate_blank_insertions_preserve_locations() {
+    let hunks = [
+        V4AHunk {
+            change_context: vec![],
+            pre_context: "before".to_string(),
+            old: String::new(),
+            new: "\n".to_string(),
+            post_context: String::new(),
+        },
+        V4AHunk {
+            change_context: vec![],
+            pre_context: "between".to_string(),
+            old: String::new(),
+            new: "\n".to_string(),
+            post_context: String::new(),
+        },
+    ];
+    let file_content = "before\nbetween\n";
+
+    let diff = fuzzy_match_v4a_diffs("test.txt", &hunks, None, file_content);
+
+    assert_eq!(
+        deltas(&diff),
+        &[
+            DiffDelta {
+                replacement_line_range: 2..2,
+                insertion: "\n".to_string(),
+            },
+            DiffDelta {
+                replacement_line_range: 3..3,
+                insertion: "\n".to_string(),
+            },
+        ]
+    );
+    assert_eq!(
+        apply_blank_line_deltas(file_content, &diff),
+        "before\n\nbetween\n\n"
+    );
+}
+
+#[test]
+fn test_v4a_separate_blank_removals_preserve_locations() {
+    let hunks = [
+        V4AHunk {
+            change_context: vec![],
+            pre_context: "before".to_string(),
+            old: "\n".to_string(),
+            new: String::new(),
+            post_context: String::new(),
+        },
+        V4AHunk {
+            change_context: vec![],
+            pre_context: "between".to_string(),
+            old: "\n".to_string(),
+            new: String::new(),
+            post_context: String::new(),
+        },
+    ];
+    let file_content = "before\n\nbetween\n\n";
+
+    let diff = fuzzy_match_v4a_diffs("test.txt", &hunks, None, file_content);
+
+    assert_eq!(
+        deltas(&diff),
+        &[
+            DiffDelta {
+                replacement_line_range: 2..3,
+                insertion: String::new(),
+            },
+            DiffDelta {
+                replacement_line_range: 4..5,
+                insertion: String::new(),
+            },
+        ]
+    );
+    assert_eq!(
+        apply_blank_line_deltas(file_content, &diff),
+        "before\nbetween\n"
+    );
+}
+
+#[test]
+fn test_v4a_trailing_blank_removal_matches_the_full_range() {
+    let hunks = [V4AHunk {
+        change_context: vec![],
+        pre_context: "before".to_string(),
+        old: "\n".to_string(),
+        new: String::new(),
+        post_context: String::new(),
+    }];
+    let file_content = "before\nKEEP\nbefore\n\n";
+
+    let diff = fuzzy_match_v4a_diffs("test.txt", &hunks, None, file_content);
+
+    assert_eq!(
+        deltas(&diff),
+        &[DiffDelta {
+            replacement_line_range: 4..5,
+            insertion: String::new(),
+        }]
+    );
+    assert_eq!(
+        apply_blank_line_deltas(file_content, &diff),
+        "before\nKEEP\nbefore\n"
+    );
+}
+
+#[test]
+fn test_v4a_blank_removal_preserves_indented_context() {
+    let hunks = [V4AHunk {
+        change_context: vec![],
+        pre_context: "before".to_string(),
+        old: "\n".to_string(),
+        new: String::new(),
+        post_context: "after".to_string(),
+    }];
+    let file_content = "before\n\n    after\n";
+
+    let diff = fuzzy_match_v4a_diffs("test.txt", &hunks, None, file_content);
+
+    assert_eq!(
+        deltas(&diff),
+        &[DiffDelta {
+            replacement_line_range: 2..3,
+            insertion: String::new(),
+        }]
+    );
+    assert_eq!(
+        apply_blank_line_deltas(file_content, &diff),
+        "before\n    after\n"
+    );
+}
+
+#[test]
+fn test_v4a_blank_for_blank_is_a_noop() {
+    let hunks = [V4AHunk {
+        change_context: vec![],
+        pre_context: "before".to_string(),
+        old: "\n".to_string(),
+        new: "\n".to_string(),
+        post_context: "after".to_string(),
+    }];
+    let file_content = "before\n\nafter\n";
+
+    let diff = fuzzy_match_v4a_diffs("test.txt", &hunks, None, file_content);
+
+    assert!(deltas(&diff).is_empty());
+    assert_eq!(diff.failures.as_ref().unwrap().noop_deltas, 1);
+    assert_eq!(apply_blank_line_deltas(file_content, &diff), file_content);
+}
+
+#[test]
+fn test_v4a_fuzzy_blank_removal_cannot_remove_code() {
+    let hunks = [V4AHunk {
+        change_context: vec![],
+        pre_context: "fn long_function_name() {\n    let value = 42;".to_string(),
+        old: "\n".to_string(),
+        new: String::new(),
+        post_context: "}".to_string(),
+    }];
+    let file_content = "fn long_function_name() {\n    let value = 42;\n    do_work();\n}\n";
+    let file_lines: Vec<_> = file_content.lines().collect();
+    assert_eq!(
+        match_diff(
+            "fn long_function_name() {\n    let value = 42;\n\n}",
+            None,
+            &file_lines,
+            SECTION_MATCH_THRESHOLD,
+            MakeJaroWinklerMatch,
+        ),
+        Some(1..5)
+    );
+
+    let diff = fuzzy_match_v4a_diffs("test.rs", &hunks, None, file_content);
+
+    assert!(deltas(&diff).is_empty());
+    assert_eq!(diff.failures.as_ref().unwrap().fuzzy_match_failures, 1);
+    assert_eq!(apply_blank_line_deltas(file_content, &diff), file_content);
+}
 #[test]
 fn test_v4a_with_change_context() {
     let hunks = vec![V4AHunk {
