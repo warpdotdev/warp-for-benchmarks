@@ -479,6 +479,72 @@ fn test_v4a_noop_diff() {
 }
 
 #[test]
+fn test_v4a_delete_blank_line() {
+    let hunks = vec![V4AHunk {
+        change_context: vec![],
+        pre_context: "fn main() {".to_string(),
+        old: "\n".to_string(),
+        new: String::new(),
+        post_context: "}".to_string(),
+    }];
+
+    let file_content = "fn main() {\n\n}";
+    let diff = fuzzy_match_v4a_diffs("test.rs", &hunks, None, file_content);
+
+    assert!(diff.failures.is_none());
+    assert_eq!(
+        deltas(&diff),
+        &[DiffDelta {
+            replacement_line_range: 2..3,
+            insertion: String::new(),
+        }]
+    );
+}
+
+#[test]
+fn test_v4a_add_blank_line() {
+    let hunks = vec![V4AHunk {
+        change_context: vec![],
+        pre_context: "fn main() {".to_string(),
+        old: String::new(),
+        new: "\n".to_string(),
+        post_context: "}".to_string(),
+    }];
+
+    let file_content = "fn main() {\n}";
+    let diff = fuzzy_match_v4a_diffs("test.rs", &hunks, None, file_content);
+
+    assert!(diff.failures.is_none());
+    assert_eq!(
+        deltas(&diff),
+        &[DiffDelta {
+            replacement_line_range: 2..2,
+            insertion: "\n".to_string(),
+        }]
+    );
+}
+
+#[test]
+fn test_v4a_blank_line_replaced_by_blank_line_is_noop() {
+    let hunks = vec![V4AHunk {
+        change_context: vec![],
+        pre_context: "fn main() {".to_string(),
+        old: "\n".to_string(),
+        new: "\n".to_string(),
+        post_context: "}".to_string(),
+    }];
+
+    let file_content = "fn main() {\n\n}";
+    let diff = fuzzy_match_v4a_diffs("test.rs", &hunks, None, file_content);
+
+    assert!(deltas(&diff).is_empty());
+    let failures = diff
+        .failures
+        .expect("blank-for-blank replacement is a no-op");
+    assert_eq!(failures.noop_deltas, 1);
+}
+
+#[test]
 fn test_v4a_empty_context() {
     // Test with no pre or post context
     let hunks = vec![V4AHunk {
