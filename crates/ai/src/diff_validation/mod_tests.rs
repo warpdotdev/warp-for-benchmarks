@@ -618,6 +618,62 @@ fn test_v4a_add_line_at_end_of_file() {
 }
 
 #[test]
+fn test_v4a_remove_one_blank_line() {
+    let hunks = vec![V4AHunk {
+        change_context: vec![],
+        pre_context: "before".to_string(),
+        old: "\n".to_string(),
+        new: String::new(),
+        post_context: "after".to_string(),
+    }];
+
+    let file_content = "before\n\nafter\n";
+    let diff = fuzzy_match_v4a_diffs("test.txt", &hunks, None, file_content);
+
+    assert!(diff.failures.is_none());
+    assert_eq!(deltas(&diff).len(), 1);
+    assert_eq!(deltas(&diff)[0].replacement_line_range, 2..3);
+    assert_eq!(deltas(&diff)[0].insertion, "");
+}
+
+#[test]
+fn test_v4a_add_one_blank_line() {
+    let hunks = vec![V4AHunk {
+        change_context: vec![],
+        pre_context: "before".to_string(),
+        old: String::new(),
+        new: "\n".to_string(),
+        post_context: "after".to_string(),
+    }];
+
+    let file_content = "before\nafter\n";
+    let diff = fuzzy_match_v4a_diffs("test.txt", &hunks, None, file_content);
+
+    assert!(diff.failures.is_none());
+    assert_eq!(deltas(&diff).len(), 1);
+    assert_eq!(deltas(&diff)[0].replacement_line_range, 2..2);
+    assert_eq!(deltas(&diff)[0].insertion, "\n");
+}
+
+#[test]
+fn test_v4a_blank_line_replaced_by_blank_line_is_noop() {
+    let hunks = vec![V4AHunk {
+        change_context: vec![],
+        pre_context: "before".to_string(),
+        old: "\n".to_string(),
+        new: "\n".to_string(),
+        post_context: "after".to_string(),
+    }];
+
+    let file_content = "before\n\nafter\n";
+    let diff = fuzzy_match_v4a_diffs("test.txt", &hunks, None, file_content);
+
+    assert!(deltas(&diff).is_empty());
+    let failures = diff.failures.expect("blank-for-blank edit is a no-op");
+    assert_eq!(failures.noop_deltas, 1);
+}
+
+#[test]
 fn test_partial_last_line_in_search_preserves_suffix() {
     // When a search string ends with a partial line (e.g. "let x = 1;\nlet x" where
     // "let x" is only a prefix of the actual file line "let x = 2;"), the Jaro-Winkler
