@@ -870,3 +870,189 @@ impl ActionButtonTheme for DefaultWeightAgentInputButtonTheme {\n\
         "The surviving delta should be the deletion"
     );
 }
+
+fn blank_line_hunk(pre: &str, old: &str, new: &str, post: &str) -> V4AHunk {
+    V4AHunk {
+        change_context: vec![],
+        pre_context: pre.into(),
+        old: old.into(),
+        new: new.into(),
+        post_context: post.into(),
+    }
+}
+
+fn apply_matched_deltas(content: &str, deltas: &[DiffDelta]) -> String {
+    let mut offsets = vec![0];
+    offsets.extend(content.match_indices('\n').map(|(offset, _)| offset + 1));
+    if offsets.last() != Some(&content.len()) {
+        offsets.push(content.len());
+    }
+    let mut result = content.to_string();
+    for delta in deltas.iter().rev() {
+        let start = offsets[delta.replacement_line_range.start - 1];
+        let end = offsets[delta.replacement_line_range.end - 1];
+        let mut insertion = delta.insertion.clone();
+        if !insertion.is_empty() && !insertion.ends_with('\n') {
+            insertion.push('\n');
+        }
+        result.replace_range(start..end, &insertion);
+    }
+    result
+}
+
+#[test]
+fn test_v4a_blank_line_application() {
+    let cases = [
+        (
+            "insertion between context",
+            "before\nafter\n",
+            vec![blank_line_hunk("before", "", "\n", "after")],
+            vec![(2, 2)],
+            "before\n\nafter\n",
+        ),
+        (
+            "deletion between context",
+            "before\n\nafter\n",
+            vec![blank_line_hunk("before", "\n", "", "after")],
+            vec![(2, 3)],
+            "before\nafter\n",
+        ),
+        (
+            "trailing deletion finds the complete pattern",
+            "before\nimportant\nbefore\n\n",
+            vec![blank_line_hunk("before", "\n", "", "")],
+            vec![(4, 5)],
+            "before\nimportant\nbefore\n",
+        ),
+        (
+            "blank post-context",
+            "before\n\n\n",
+            vec![blank_line_hunk("before", "\n", "", "\n")],
+            vec![(2, 3)],
+            "before\n\n",
+        ),
+        (
+            "context-free deletion",
+            "\n",
+            vec![blank_line_hunk("", "\n", "", "")],
+            vec![(1, 2)],
+            "",
+        ),
+        (
+            "leading deletion beside an ordinary edit",
+            "\nanchor\nold\n",
+            vec![
+                blank_line_hunk("", "\n", "", ""),
+                blank_line_hunk("anchor", "old", "new", ""),
+            ],
+            vec![(1, 2), (3, 4)],
+            "anchor\nnew\n",
+        ),
+        (
+            "adjacent blank deletions",
+            "\nanchor\n\n",
+            vec![
+                blank_line_hunk("", "\n", "", ""),
+                blank_line_hunk("anchor", "\n", "", ""),
+            ],
+            vec![(1, 2), (3, 4)],
+            "anchor\n",
+        ),
+        (
+            "ordinary edit beside overlapping context",
+            "before\nold\nmiddle\n\n",
+            vec![
+                blank_line_hunk("before", "old", "new", ""),
+                blank_line_hunk("before\nold\nmiddle", "\n", "", ""),
+            ],
+            vec![(2, 3), (4, 5)],
+            "before\nnew\nmiddle\n",
+        ),
+        (
+            "indentation-agnostic context remains unchanged",
+            "    before\n\n    after\n",
+            vec![blank_line_hunk("before", "\n", "", "after")],
+            vec![(2, 3)],
+            "    before\n    after\n",
+        ),
+        (
+            "fuzzy context remains unchanged",
+            "function calculate_total() {\n\n    return result;\n",
+            vec![blank_line_hunk(
+                "function calculate_totals() {",
+                "\n",
+                "",
+                "    return result;",
+            )],
+            vec![(2, 3)],
+            "function calculate_total() {\n    return result;\n",
+        ),
+        (
+            "multiple blank lines",
+            "before\n\nafter\n",
+            vec![blank_line_hunk("before", "\n", "\n\n", "after")],
+            vec![(2, 3)],
+            "before\n\n\nafter\n",
+        ),
+        (
+            "reducing blank lines is not a no-op",
+            "before\n\n\nafter\n",
+            vec![blank_line_hunk("before", "\n\n", "\n", "after")],
+            vec![(2, 4)],
+            "before\n\nafter\n",
+        ),
+    ];
+
+    for (name, content, hunks, expected_ranges, expected_content) in cases {
+        let diff = fuzzy_match_v4a_diffs("test.rs", &hunks, None, content);
+        assert_eq!(diff.failures, None, "{name}");
+        assert_eq!(
+            deltas(&diff)
+                .iter()
+                .map(|delta| (
+                    delta.replacement_line_range.start,
+                    delta.replacement_line_range.end
+                ))
+                .collect::<Vec<_>>(),
+            expected_ranges,
+            "{name}"
+        );
+        assert_eq!(
+            apply_matched_deltas(content, deltas(&diff)),
+            expected_content,
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn test_v4a_blank_deletion_does_not_match_nonblank_content() {
+    for (content, hunk) in [
+        (
+            "before\nimportant\n",
+            blank_line_hunk("before", "\n", "", ""),
+        ),
+        (
+            "unrelated\nbefore\n",
+            blank_line_hunk("before", "\n", "", ""),
+        ),
+        (
+            "function calculate_total() {\nimportant\n    return result;\n",
+            blank_line_hunk(
+                "function calculate_totals() {",
+                "\n",
+                "",
+                "    return result;",
+            ),
+        ),
+    ] {
+        let diff = fuzzy_match_v4a_diffs("test.rs", &[hunk], None, content);
+        assert_eq!(deltas(&diff), [], "{content:?}");
+        assert_eq!(
+            diff.failures
+                .expect("unmatched blank deletion")
+                .fuzzy_match_failures,
+            1
+        );
+    }
+}
