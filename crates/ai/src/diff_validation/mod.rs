@@ -417,13 +417,22 @@ pub fn fuzzy_match_v4a_diffs(
         }
 
         // Find the location of the edit using context
-        let match_range = find_v4a_match(diff, &file_lines);
+        let match_range = find_v4a_match(diff, &file_lines).filter(|range| {
+            // Fuzzy context must not turn a blank-only deletion into a nonblank deletion.
+            !diff.old.lines().all(|line| line.trim().is_empty())
+                || file_lines[range.start - 1..range.end - 1]
+                    .iter()
+                    .all(|line| line.trim().is_empty())
+        });
 
         match match_range {
             Some(range) => {
                 // Check if the replacement is identical to what's already there
-                let matched_content = file_lines[range.start - 1..range.end - 1].join("\n");
-                if diff.new == matched_content {
+                if diff
+                    .new
+                    .lines()
+                    .eq(file_lines[range.start - 1..range.end - 1].iter().copied())
+                {
                     log::info!(
                         "Ignoring V4A diff where new content is identical to matched file content"
                     );
@@ -1203,13 +1212,17 @@ fn find_v4a_match(edit: &V4AHunk, file_lines: &[&str]) -> Option<Range<usize>> {
     }
 
     // Combine all three sections into a single search text for the scorers
-    let combined_search = [
+    let combined_lines = [
         pre_context_lines.as_slice(),
         old_lines.as_slice(),
         post_context_lines.as_slice(),
     ]
-    .concat()
-    .join("\n");
+    .concat();
+    let mut combined_search = combined_lines.join("\n");
+    // Terminate the final blank line so scorers validate it instead of shortening the window.
+    if combined_lines.last() == Some(&"") {
+        combined_search.push('\n');
+    }
 
     // Try exact match first
     if let Some(range) = match_diff(
